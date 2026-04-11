@@ -1,5 +1,5 @@
 {
-  "name": "ccwatch",
+  "name": "@anentrypoint/ccwatch",
   "version": "1.0.0",
   "description": "Watch Claude Code JSONL output files and emit structured events as a Node.js EventEmitter",
   "type": "module",
