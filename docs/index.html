@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ccwatch — Watch Claude Code JSONL events in real-time</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rippleui@1.12.1/dist/css/styles.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="header-inner">
+        <a href="#" class="brand">
+          <span class="brand-icon">◎</span>
+          <span class="brand-name">ccwatch</span>
+          <span class="brand-version" id="pkgVersion">v1.0.0</span>
+        </a>
+        <nav class="header-nav">
+          <a href="#install">Install</a>
+          <a href="#events">Events</a>
+          <a href="#api">API</a>
+          <a href="https://github.com/AnEntrypoint/ccwatch" target="_blank" rel="noopener">GitHub</a>
+          <button class="btn btn-ghost btn-sm theme-toggle" id="themeToggle" aria-label="Toggle theme">
+            <span class="theme-icon">☀</span>
+          </button>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <div class="hero-badge">Zero dependencies · ESM + CJS · Node ≥ 18</div>
+        <h1 class="hero-title">Watch Claude Code output<br /><span class="hero-accent">as it happens.</span></h1>
+        <p class="hero-subtitle">
+          ccwatch tails <code>~/.claude/projects/</code> JSONL files and emits structured events —
+          streaming starts, tool calls, results — as a standard Node.js EventEmitter.
+        </p>
+        <div class="hero-actions">
+          <div class="install-box">
+            <code class="install-cmd" id="installCmd">npm install ccwatch</code>
+            <button class="copy-btn" id="copyInstall" aria-label="Copy install command">⎘</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="install">
+      <div class="container">
+        <div class="section-grid">
+          <div class="card code-card">
+            <div class="card-header">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="card-title">ESM / TypeScript</span>
+            </div>
+            <pre class="code-block"><code><span class="kw">import</span> <span class="br">{</span> watch <span class="br">}</span> <span class="kw">from</span> <span class="str">'ccwatch'</span><span class="pu">;</span>
+
+<span class="kw">const</span> watcher <span class="pu">=</span> watch<span class="pu">()</span>
+  <span class="pu">.</span>on<span class="pu">(</span><span class="str">'conversation_created'</span><span class="pu">,</span> <span class="pu">({</span> conversation <span class="pu">})</span> <span class="pu">=&gt;</span> <span class="br">{</span>
+    console<span class="pu">.</span>log<span class="pu">(</span><span class="str">'New session:'</span><span class="pu">,</span> conversation<span class="pu">.</span>title<span class="pu">)</span><span class="pu">;</span>
+  <span class="br">}</span><span class="pu">)</span>
+  <span class="pu">.</span>on<span class="pu">(</span><span class="str">'streaming_progress'</span><span class="pu">,</span> <span class="pu">({</span> block<span class="pu">,</span> role <span class="pu">})</span> <span class="pu">=&gt;</span> <span class="br">{</span>
+    <span class="kw">if</span> <span class="pu">(</span>block<span class="pu">.</span>type <span class="pu">===</span> <span class="str">'text'</span><span class="pu">)</span>
+      process<span class="pu">.</span>stdout<span class="pu">.</span>write<span class="pu">(</span>block<span class="pu">.</span>text<span class="pu">)</span><span class="pu">;</span>
+  <span class="br">}</span><span class="pu">)</span>
+  <span class="pu">.</span>on<span class="pu">(</span><span class="str">'streaming_complete'</span><span class="pu">,</span> <span class="pu">({</span> conversationId <span class="pu">})</span> <span class="pu">=&gt;</span> <span class="br">{</span>
+    console<span class="pu">.</span>log<span class="pu">(</span><span class="str">'\nDone:'</span><span class="pu">,</span> conversationId<span class="pu">)</span><span class="pu">;</span>
+  <span class="br">}</span><span class="pu">)</span><span class="pu">;</span>
+
+process<span class="pu">.</span>on<span class="pu">(</span><span class="str">'SIGINT'</span><span class="pu">,</span> <span class="pu">()</span> <span class="pu">=&gt;</span> watcher<span class="pu">.</span>stop<span class="pu">()</span>)<span class="pu">;</span></code></pre>
+          </div>
+
+          <div class="card code-card">
+            <div class="card-header">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="card-title">CommonJS</span>
+            </div>
+            <pre class="code-block"><code><span class="kw">const</span> <span class="br">{</span> watch<span class="pu">,</span> JsonlWatcher <span class="br">}</span> <span class="pu">=</span> require<span class="pu">(</span><span class="str">'ccwatch'</span><span class="pu">)</span><span class="pu">;</span>
+
+<span class="co">// Use default ~/.claude/projects dir</span>
+<span class="kw">const</span> watcher <span class="pu">=</span> watch<span class="pu">()</span><span class="pu">;</span>
+
+<span class="co">// Or pass a custom directory</span>
+<span class="kw">const</span> custom <span class="pu">=</span> watch<span class="pu">(</span><span class="str">'/path/to/projects'</span><span class="pu">)</span><span class="pu">;</span>
+
+<span class="co">// Or use the class directly</span>
+<span class="kw">const</span> w <span class="pu">=</span> <span class="kw">new</span> JsonlWatcher<span class="pu">(</span><span class="str">'/custom/dir'</span><span class="pu">)</span><span class="pu">;</span>
+w<span class="pu">.</span>start<span class="pu">()</span><span class="pu">;</span>
+w<span class="pu">.</span>on<span class="pu">(</span><span class="str">'streaming_start'</span><span class="pu">,</span> <span class="pu">(</span>e<span class="pu">)</span> <span class="pu">=&gt;</span> console<span class="pu">.</span>log<span class="pu">(</span>e<span class="pu">)</span><span class="pu">)</span><span class="pu">;</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="events">
+      <div class="container">
+        <h2 class="section-title">Events</h2>
+        <p class="section-sub">Every event is emitted on the watcher's EventEmitter with a consistent payload shape.</p>
+        <div id="eventsRoot"></div>
+      </div>
+    </section>
+
+    <section class="section" id="api">
+      <div class="container">
+        <h2 class="section-title">API</h2>
+        <div id="apiRoot"></div>
+      </div>
+    </section>
+
+    <section class="section section-alt demo-section" id="demo">
+      <div class="container">
+        <h2 class="section-title">Live Event Stream</h2>
+        <p class="section-sub">This is what ccwatch emits when Claude Code runs.</p>
+        <div id="demoRoot"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>MIT License · <a href="https://github.com/AnEntrypoint/ccwatch">AnEntrypoint/ccwatch</a> · Built with <a href="https://webjsx.org">WebJSX</a> + <a href="https://ripple-ui.com">RippleUI</a></p>
+    </div>
+  </footer>
+
+  <script src="https://unpkg.com/webjsx@latest/dist/webjsx.umd.js"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

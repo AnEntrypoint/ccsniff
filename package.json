@@ -1,0 +1,23 @@
+{
+  "name": "ccwatch",
+  "version": "1.0.0",
+  "description": "Watch Claude Code JSONL output files and emit structured events as a Node.js EventEmitter",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "require": "./src/index.cjs"
+    }
+  },
+  "files": ["src/"],
+  "keywords": ["claude", "claude-code", "ai", "agent", "watch", "streaming", "jsonl"],
+  "author": "AnEntrypoint",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AnEntrypoint/ccwatch.git"
+  },
+  "homepage": "https://anentrypoint.github.io/ccwatch",
+  "engines": { "node": ">=18" }
+}
