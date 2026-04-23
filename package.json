@@ -1,5 +1,5 @@
 {
-  "name": "@lanmower/cc-tail",
+  "name": "cc-tail",
   "version": "1.0.10",
   "description": "Watch Claude Code JSONL output files and emit structured events as a Node.js EventEmitter",
   "type": "module",
