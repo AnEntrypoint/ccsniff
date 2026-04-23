@@ -25,18 +25,18 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  process.stdout.write(`cc-tail — query and tail Claude Code session history
+  process.stdout.write(`ccpeek — query and tail Claude Code session history
 
 Usage:
-  cc-tail [--since 12d] [--grep pattern] [--cwd path] [--role user|assistant|tool_result]
+  ccpeek [--since 12d] [--grep pattern] [--cwd path] [--role user|assistant|tool_result]
           [--type text|tool_use|tool_result] [--limit N] [--json] [-f]
-  cc-tail --rollup out.ndjson [--since 7d]
-  cc-tail --rollup out.sqlite --format sqlite [--since 7d]      # requires better-sqlite3
+  ccpeek --rollup out.ndjson [--since 7d]
+  ccpeek --rollup out.sqlite --format sqlite [--since 7d]      # requires better-sqlite3
 
 Examples:
-  cc-tail --since 24h --grep "rs-exec" --limit 50
-  cc-tail --since 7d --role user --json
-  cc-tail -f                  # tail new events live
+  ccpeek --since 24h --grep "rs-exec" --limit 50
+  ccpeek --since 7d --role user --json
+  ccpeek -f                  # tail new events live
 `);
 }
 

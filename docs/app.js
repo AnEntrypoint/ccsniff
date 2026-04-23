@@ -2,9 +2,9 @@ import * as webjsx from 'webjsx';
 const h = webjsx.createElement;
 
 const VERSION = 'v1.0.2';
-const INSTALL = 'npm install @lanmower/cc-tail';
-const REPO = 'https://github.com/AnEntrypoint/cc-tail';
-const NPM = 'https://www.npmjs.com/package/@lanmower/cc-tail';
+const INSTALL = 'npm install ccpeek';
+const REPO = 'https://github.com/AnEntrypoint/ccpeek';
+const NPM = 'https://www.npmjs.com/package/ccpeek';
 
 const state = { tab: 'overview', copied: false };
 const root = document.getElementById('root');
@@ -61,7 +61,7 @@ function Topbar() {
         onclick: (e) => { e.preventDefault(); state.tab = id; render(); scrollTo(id); }
     }, label);
     return h('header', { class: 'app-topbar' },
-        h('span', { class: 'brand' }, '247420', h('span', { class: 'slash' }, ' / '), 'cc-tail'),
+        h('span', { class: 'brand' }, '247420', h('span', { class: 'slash' }, ' / '), 'ccpeek'),
         h('nav', {},
             tab('overview', 'overview'),
             tab('install',  'install'),
@@ -76,7 +76,7 @@ function Topbar() {
 function Crumb() {
     return h('div', { class: 'app-crumb' },
         h('span', {}, '247420'), h('span', { class: 'sep' }, '›'),
-        h('span', {}, 'cc-tail'), h('span', { class: 'sep' }, '›'),
+        h('span', {}, 'ccpeek'), h('span', { class: 'sep' }, '›'),
         h('span', { class: 'leaf' }, state.tab),
         h('span', { style: 'margin-left:auto;display:flex;gap:10px;align-items:center' },
             h('span', { class: 'chip accent' }, '● live'),
@@ -128,12 +128,12 @@ function Install() {
 function Receipt() {
     const rows = [
         ['status',       'live · node >= 18'],
-        ['package',      '@lanmower/cc-tail'],
+        ['package',      'ccpeek'],
         ['version',      VERSION],
         ['license',      'MIT'],
         ['lang',         'javascript · esm + cjs'],
         ['deps',         '0 runtime'],
-        ['source',       'AnEntrypoint/cc-tail'],
+        ['source',       'AnEntrypoint/ccpeek'],
         ['surface',      'jsonlwatcher · watch()']
     ];
     return h('table', { class: 'kv' },
@@ -148,7 +148,7 @@ function Pre({ children }) {
 }
 
 const ESM_SNIPPET =
-`<span class="k">import</span> { watch } <span class="k">from</span> <span class="s">'@lanmower/cc-tail'</span>;
+`<span class="k">import</span> { watch } <span class="k">from</span> <span class="s">'ccpeek'</span>;
 
 <span class="k">const</span> watcher = <span class="k">watch</span>()
   .<span class="k">on</span>(<span class="s">'conversation_created'</span>, ({ conversation }) =&gt; {
@@ -165,7 +165,7 @@ const ESM_SNIPPET =
 process.on(<span class="s">'SIGINT'</span>, () =&gt; watcher.stop());`;
 
 const CJS_SNIPPET =
-`<span class="k">const</span> { watch, JsonlWatcher } = <span class="k">require</span>(<span class="s">'@lanmower/cc-tail'</span>);
+`<span class="k">const</span> { watch, JsonlWatcher } = <span class="k">require</span>(<span class="s">'ccpeek'</span>);
 
 <span class="c">// default ~/.claude/projects dir</span>
 <span class="k">const</span> watcher = <span class="k">watch</span>();
@@ -227,7 +227,7 @@ function DemoSection() {
 
 function Overview() {
     return [
-        h('h1', { id: 'overview' }, 'cc-tail'),
+        h('h1', { id: 'overview' }, 'ccpeek'),
         h('p', { class: 'lede' }, 'watch claude code jsonl output files and emit structured events — streaming starts, tool calls, results — as a standard node.js EventEmitter. quiet chrome, loud events.'),
 
         h('h3', { id: 'install' }, 'install'),
@@ -250,7 +250,7 @@ function Overview() {
         ApiSection(),
 
         h('h3', { id: 'demo' }, 'demo'),
-        h('p', {}, 'this is what cc-tail emits when claude code runs. synthetic stream, loops forever.'),
+        h('p', {}, 'this is what ccpeek emits when claude code runs. synthetic stream, loops forever.'),
         DemoSection()
     ];
 }

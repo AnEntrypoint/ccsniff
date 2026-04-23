@@ -11,7 +11,7 @@
     }
   },
   "bin": {
-    "cc-tail": "./src/cli.js"
+    "ccpeek": "./src/cli.js"
   },
   "files": [
     "src/"
@@ -29,9 +29,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AnEntrypoint/cc-tail.git"
+    "url": "git+https://github.com/AnEntrypoint/ccpeek.git"
   },
-  "homepage": "https://anentrypoint.github.io/cc-tail",
+  "homepage": "https://anentrypoint.github.io/ccpeek",
   "engines": {
     "node": ">=18"
   }
