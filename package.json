@@ -1,6 +1,6 @@
 {
   "name": "@lanmower/cc-tail",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Watch Claude Code JSONL output files and emit structured events as a Node.js EventEmitter",
   "type": "module",
   "main": "./src/index.js",
