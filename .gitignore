@@ -8,3 +8,5 @@ node_modules/
 .code-search/
 .codeinsight
 *.stackdump
+.gm/
+rs-learn.db
