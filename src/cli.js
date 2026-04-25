@@ -32,7 +32,7 @@ function printHelp() {
   process.stdout.write(`ccsniff — query, search, and tail Claude Code session history
 
 USAGE
-  ccsniff [filters] [output]
+  ccsniff [filters] [output]                dump matching events (requires ≥1 flag)
   ccsniff -f                                live tail
   ccsniff --rollup out.ndjson [--since 7d]
   ccsniff --rollup out.sqlite --format sqlite
@@ -215,7 +215,7 @@ function sortRows(rows, key, reverse) {
 }
 
 const { opts } = parseArgs(process.argv.slice(2));
-if (opts.help) { printHelp(); process.exit(0); }
+if (opts.help || process.argv.length <= 2) { printHelp(); process.exit(0); }
 
 const since = parseTime(opts.since || opts.after);
 const filter = buildFilter(opts);
