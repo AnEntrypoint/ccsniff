@@ -1,0 +1,27 @@
+id: home
+title: Home
+hero:
+  heading: "ccsniff"
+  subheading: "Claude Code JSONL → events"
+  body: "watch Claude Code's session JSONL files and emit structured events as a Node EventEmitter. observability for an opaque thing."
+  badges:
+    - { label: "observability" }
+    - { label: "events" }
+    - { label: "tooling" }
+  ctas:
+    - { label: "GitHub", href: "https://github.com/AnEntrypoint/ccsniff", primary: true }
+    - { label: "Install", href: "https://github.com/AnEntrypoint/ccsniff#installation" }
+    - { label: "247420", href: "https://247420.xyz" }
+features:
+  heading: "Why ccsniff"
+  items:
+    - { name: "observability", desc: "flagship trait of ccsniff." }
+    - { name: "events", desc: "core capability of ccsniff." }
+quickstart:
+  heading: Quick start
+  lines:
+    - { kind: "cmt", text: "# install" }
+    - { kind: "cmd", text: "npm i ccsniff" }
+    - { kind: "cmt", text: "" }
+    - { kind: "cmt", text: "# source" }
+    - { kind: "cmd", text: "git clone https://github.com/AnEntrypoint/ccsniff.git" }

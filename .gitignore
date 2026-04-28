@@ -10,3 +10,5 @@ node_modules/
 *.stackdump
 .gm/
 rs-learn.db
+dist/
+.codeinsight/

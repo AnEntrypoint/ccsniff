@@ -1,0 +1,16 @@
+title: "ccsniff"
+tagline: "Claude Code JSONL → events"
+description: "watch Claude Code's session JSONL files and emit structured events as a Node EventEmitter. observability for an opaque thing."
+repo: "https://github.com/AnEntrypoint/ccsniff"
+url: "https://anentrypoint.github.io/ccsniff"
+year: 2026
+keywords:
+  - "observability"
+  - "events"
+  - "247420"
+  - "anentrypoint"
+accent_from: "#ffa657"
+accent_to: "#f0883e"
+glyph: "§"
+code: "050"
+category: "tooling"
