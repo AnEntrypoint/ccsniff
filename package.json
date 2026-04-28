@@ -1,6 +1,6 @@
 {
   "name": "ccsniff",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Watch Claude Code JSONL output files and emit structured events as a Node.js EventEmitter",
   "type": "module",
   "main": "./src/index.js",
