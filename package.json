@@ -14,8 +14,13 @@
     "ccsniff": "./src/cli.js"
   },
   "files": [
-    "src/"
+    "src/",
+    "gui/"
   ],
+  "scripts": {
+    "test": "node test.js",
+    "gui": "node src/cli.js gui"
+  },
   "keywords": [
     "claude",
     "claude-code",

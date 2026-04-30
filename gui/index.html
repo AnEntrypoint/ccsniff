@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="ds-247420" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ccsniff — observatory</title>
+  <link rel="stylesheet" href="https://unpkg.com/anentrypoint-design@latest/dist/247420.css">
+  <script type="importmap">
+    { "imports": {
+      "anentrypoint-design": "https://unpkg.com/anentrypoint-design@latest/dist/247420.js"
+    } }
+  </script>
+  <style>
+    body { margin: 0; }
+    .grid { display: grid; gap: 12px; }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .stat { padding: 14px 16px; border-radius: 10px; background: var(--panel-bg, #111); }
+    .stat .lbl { font-size: 11px; opacity: .65; text-transform: uppercase; letter-spacing: .08em; }
+    .stat .val { font-size: 22px; font-weight: 600; margin-top: 4px; }
+    .row-grid { display: grid; gap: 4px 12px; align-items: start; padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,.05); font-family: var(--ff-mono, ui-monospace, monospace); font-size: 12px; }
+    .row-grid.sessions { grid-template-columns: 110px 80px 60px 60px 60px 1fr; }
+    .row-grid.projects { grid-template-columns: 1fr 90px 90px 90px 110px; }
+    .row-grid.tools    { grid-template-columns: 1fr 80px 80px 80px 110px; }
+    .row-grid.events   { grid-template-columns: 110px 90px 90px 110px 1fr; }
+    .row-grid.search   { grid-template-columns: 60px 100px 90px 90px 1fr; }
+    .row-grid.errors   { grid-template-columns: 110px 100px 1fr; }
+    .row-grid .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row-grid .accent { color: var(--panel-accent, #6cf); }
+    .row-grid .err { color: #f66; }
+    .bar { height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--panel-accent, #6cf); }
+    .spark { display: flex; align-items: flex-end; gap: 2px; height: 60px; }
+    .spark > i { display: block; flex: 1; background: var(--panel-accent, #6cf); min-height: 1px; opacity: .8; }
+    .live { font-family: var(--ff-mono, ui-monospace, monospace); font-size: 12px; max-height: 360px; overflow: auto; padding: 6px 12px; }
+    .live .e { padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,.05); }
+    .live .e .ts { opacity: .5; margin-right: 8px; }
+    .live .e .k { color: var(--panel-accent, #6cf); margin-right: 8px; }
+    input.search { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); color: inherit; font: inherit; }
+    .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 10px; margin-right: 4px; }
+    .pill.err { background: rgba(255,80,80,.18); color: #f88; }
+    .tab-active { background: rgba(255,255,255,.08); border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -2,6 +2,26 @@
 import { JsonlReplayer, rollup } from './index.js';
 import path from 'path';
 
+if (process.argv[2] === 'gui') {
+  const { createServer } = await import('./gui-server.js');
+  const args = process.argv.slice(3);
+  let port = 0, host = '127.0.0.1', open = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--port') port = parseInt(args[++i], 10) || 0;
+    else if (a === '--host') host = args[++i];
+    else if (a === '--open') open = true;
+  }
+  if (!port) port = 4791;
+  const { url } = await createServer({ port, host });
+  process.stdout.write(`ccsniff gui · ${url}\n`);
+  if (open) {
+    const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+    try { (await import('child_process')).exec(cmd); } catch {}
+  }
+  process.stdin.resume();
+} else {
+
 const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
@@ -389,4 +409,5 @@ if (opts.count) {
 for (const ev of rows) process.stdout.write(formatRow(ev, opts));
 process.stderr.write(`# ${stats.events} events / ${stats.files} files / ${rows.length} matched\n`);
 
+}
 }
