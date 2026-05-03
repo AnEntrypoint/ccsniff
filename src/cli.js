@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { JsonlReplayer, rollup } from './index.js';
+import { JsonlReplayer, rollup, vault } from './index.js';
 import path from 'path';
 
 if (process.argv[2] === 'gui') {
@@ -21,6 +21,8 @@ if (process.argv[2] === 'gui') {
   }
   process.stdin.resume();
 } else {
+
+{ const r = vault(); if (r.copied > 0) process.stderr.write(`# vault: ${r.copied} copied → ~/.claude/history-backup\n`); }
 
 const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort'],

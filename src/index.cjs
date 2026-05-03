@@ -228,6 +228,37 @@ function replay(projectsDir, opts) {
   return new JsonlReplayer(projectsDir);
 }
 
+function vault({ projectsDir = DEFAULT_DIR, destDir = path.join(os.homedir(), '.claude', 'history-backup') } = {}) {
+  if (!fs.existsSync(projectsDir)) return { copied: 0, skipped: 0 };
+  let copied = 0, skipped = 0;
+  const walk = (src, depth) => {
+    if (depth > 5) return;
+    let entries;
+    try { entries = fs.readdirSync(src, { withFileTypes: true }); } catch { return; }
+    for (const d of entries) {
+      const srcPath = path.join(src, d.name);
+      const rel = path.relative(projectsDir, srcPath);
+      const dstPath = path.join(destDir, rel);
+      if (d.isDirectory()) { walk(srcPath, depth + 1); continue; }
+      if (!d.name.endsWith('.jsonl')) continue;
+      let srcStat;
+      try { srcStat = fs.statSync(srcPath); } catch { continue; }
+      try {
+        const dstStat = fs.statSync(dstPath);
+        if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs) { skipped++; continue; }
+      } catch {}
+      try {
+        fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+        fs.copyFileSync(srcPath, dstPath);
+        fs.utimesSync(dstPath, srcStat.atime, srcStat.mtime);
+        copied++;
+      } catch {}
+    }
+  };
+  walk(projectsDir, 0);
+  return { copied, skipped };
+}
+
 async function rollup({ projectsDir, since = 0, out, format = 'ndjson' } = {}) {
   if (!out) throw new Error('rollup: out path required');
   const r = new JsonlReplayer(projectsDir);
@@ -299,4 +330,4 @@ async function rollupSqlite(r, { since, out }) {
   return { ...stats, rows, format: 'sqlite', out };
 }
 
-module.exports = { JsonlWatcher, JsonlReplayer, watch, replay, rollup };
+module.exports = { JsonlWatcher, JsonlReplayer, watch, replay, rollup, vault };
