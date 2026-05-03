@@ -26,7 +26,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'stats', 'count', 'gm-audit', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -60,7 +60,6 @@ USAGE
   ccsniff --list-projects
   ccsniff --list-tools
   ccsniff --stats [filters]
-  ccsniff --gm-audit [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
   --since <t>            include events at/after t (alias: --after)
@@ -239,53 +238,6 @@ if (opts.help || process.argv.length <= 2) { printHelp(); process.exit(0); }
 
 const since = parseTime(opts.since || opts.after);
 const filter = buildFilter(opts);
-
-// ---------- gm-audit (existing, untouched logic, now respects new filters)
-if (opts['gm-audit']) {
-  const sessions = new Map();
-  const r2 = new JsonlReplayer();
-  r2.on('streaming_progress', ev => {
-    if (!filter(ev)) return;
-    const conv = ev.conversation;
-    if (conv.isSubagent) return;
-    if (ev.role !== 'user' && ev.role !== 'assistant') return;
-    const sid = conv.id;
-    if (!sessions.has(sid)) sessions.set(sid, { cwd: conv.cwd, turns: [] });
-    const s = sessions.get(sid);
-    if (ev.role === 'user' && ev.block?.type === 'text') {
-      const t = ev.block.text || '';
-      const isContinuation = /^This session is being continued from a previous conversation/.test(t.trimStart());
-      const isSystem = ev.block.isMeta || isContinuation || /^<(task-notification|command-name|local-command|system-reminder)\b/.test(t.trimStart()) || t === '[Request interrupted by user]' || t === '[Request interrupted by user for tool use]';
-      s.turns.push({ isMeta: isSystem, firstTool: null, text: t.slice(0, 80) });
-    } else if (ev.role === 'assistant' && ev.block?.type === 'tool_use' && s.turns.length) {
-      const last = s.turns[s.turns.length - 1];
-      if (last.firstTool === null) last.firstTool = ev.block.name || '';
-    }
-  });
-  r2.replay({ since });
-  const isTerse = t => t.text.trim().length <= 5 || /^\/\w/.test(t.text.trim());
-  let totalReal = 0, totalCompliant = 0, totalTerse = 0;
-  for (const [sid, s] of sessions) {
-    const real = s.turns.filter(t => !t.isMeta);
-    const compliant = real.filter(t => t.firstTool === 'Skill' || t.firstTool === 'mcp__gm__Skill');
-    const terse = real.filter(t => isTerse(t) && t.firstTool !== 'Skill' && t.firstTool !== 'mcp__gm__Skill');
-    totalReal += real.length;
-    totalCompliant += compliant.length;
-    totalTerse += terse.length;
-    const pct = real.length ? Math.round(100 * compliant.length / real.length) : 0;
-    const violations = real.filter(t => t.firstTool !== 'Skill' && t.firstTool !== 'mcp__gm__Skill' && !isTerse(t));
-    if (real.length === 0) continue;
-    process.stdout.write(`[${pct}%] ${path.basename(s.cwd || sid)} (${compliant.length}/${real.length}, terse-skip:${terse.length}) sid=${sid.slice(0, 8)}\n`);
-    for (const v of violations.slice(0, 3)) {
-      process.stdout.write(`  MISS first=${v.firstTool || 'none'} msg="${v.text.replace(/\s+/g, ' ')}"\n`);
-    }
-  }
-  const total = totalReal ? Math.round(100 * totalCompliant / totalReal) : 0;
-  const adjCompliant = totalCompliant + totalTerse;
-  const adjTotal = totalReal ? Math.round(100 * adjCompliant / totalReal) : 0;
-  process.stderr.write(`# gm-audit: ${totalCompliant}/${totalReal} compliant (${total}%) | adj (terse-skip): ${adjCompliant}/${totalReal} (${adjTotal}%) | ${sessions.size} sessions\n`);
-  process.exit(0);
-}
 
 // ---------- rollup (filtered)
 if (opts.rollup) {

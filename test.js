@@ -97,6 +97,7 @@ async function main() {
     console.log('ok static');
   } finally {
     await srv.close();
+    if (!projectsDir.startsWith(os.tmpdir())) throw new Error(`refusing to rmSync outside tmpdir: ${projectsDir}`);
     fs.rmSync(projectsDir, { recursive: true, force: true });
   }
   console.log('\nALL TESTS PASS');
