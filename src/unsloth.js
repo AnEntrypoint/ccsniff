@@ -1,8 +1,17 @@
+const SYS_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/gi;
+const CC_ENVELOPE = /<\/?(command-name|command-message|command-args|local-command-stdout|local-command-stderr|user-prompt-submit-hook|stdin)[^>]*>/gi;
+
+function sanitize(s) {
+  if (typeof s !== 'string' || !s) return s || '';
+  return s.replace(SYS_REMINDER, '').replace(CC_ENVELOPE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function textOf(b) {
-  if (typeof b.text === 'string') return b.text;
-  if (typeof b.content === 'string') return b.content;
-  if (Array.isArray(b.content)) return b.content.map(c => c?.text || '').join('');
-  return '';
+  let raw = '';
+  if (typeof b.text === 'string') raw = b.text;
+  else if (typeof b.content === 'string') raw = b.content;
+  else if (Array.isArray(b.content)) raw = b.content.map(c => c?.text || '').join('');
+  return sanitize(raw);
 }
 
 function groupBySession(events) {

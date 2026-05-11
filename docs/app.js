@@ -6,7 +6,7 @@ const INSTALL = 'npm install ccsniff';
 const REPO = 'https://github.com/AnEntrypoint/ccsniff';
 const NPM = 'https://www.npmjs.com/package/ccsniff';
 
-const state = { tab: 'overview', copied: false };
+const state = { tab: 'overview', copied: false, demoRows: [] };
 const root = document.getElementById('root');
 
 const EVENTS = [
@@ -42,6 +42,7 @@ const side = [
     { group: 'project', items: [
         ['◆', 'overview',  'overview'],
         ['§', 'install',   'install'],
+        ['§', 'cli',       'cli'],
         ['§', 'events',    'events'],
         ['§', 'api',       'api'],
         ['§', 'demo',      'demo']
@@ -65,6 +66,7 @@ function Topbar() {
         h('nav', {},
             tab('overview', 'overview'),
             tab('install',  'install'),
+            tab('cli',      'cli'),
             tab('events',   'events'),
             tab('api',      'api'),
             tab('demo',     'demo'),
@@ -144,7 +146,7 @@ function Receipt() {
 }
 
 function Pre({ children }) {
-    return h('pre', {}, h('code', { innerHTML: children }));
+    return h('pre', {}, h('code', { dangerouslySetInnerHTML: { __html: children } }));
 }
 
 const ESM_SNIPPET =
@@ -163,6 +165,25 @@ const ESM_SNIPPET =
   });
 
 process.on(<span class="s">'SIGINT'</span>, () =&gt; watcher.stop());`;
+
+const CLI_SNIPPET =
+`<span class="c"># tail live events from ~/.claude/projects</span>
+$ npx ccsniff -f
+
+<span class="c"># search, filter, slice</span>
+$ npx ccsniff <span class="k">--since</span> 24h <span class="k">--grep</span> <span class="s">"error"</span> <span class="k">--limit</span> 50
+$ npx ccsniff <span class="k">--project</span> ccsniff <span class="k">--role</span> assistant <span class="k">--tool</span> Bash
+
+<span class="c"># rollups (ndjson or sqlite)</span>
+$ npx ccsniff <span class="k">--rollup</span> out.ndjson <span class="k">--since</span> 7d
+$ npx ccsniff <span class="k">--rollup</span> out.sqlite <span class="k">--format</span> sqlite
+
+<span class="c"># Unsloth / TRL training export — one conversation per session</span>
+$ npx ccsniff <span class="k">--unsloth</span> train.jsonl <span class="k">--since</span> 7d <span class="k">--no-subagents</span>
+$ npx ccsniff <span class="k">--unsloth</span> train.jsonl <span class="k">--unsloth-format</span> sharegpt
+
+<span class="c"># interactive observatory (BM25 search + live stream)</span>
+$ npx ccsniff gui <span class="k">--open</span>`;
 
 const CJS_SNIPPET =
 `<span class="k">const</span> { watch, JsonlWatcher } = <span class="k">require</span>(<span class="s">'ccsniff'</span>);
@@ -221,7 +242,17 @@ function DemoSection() {
             h('span', {}, 'live event stream'),
             h('span', {}, 'synthetic · loops')
         ),
-        h('div', { class: 'panel-body', style: 'max-height:340px;overflow-y:auto;padding:8px 0', id: 'demoStream' })
+        h('div', { class: 'panel-body', style: 'max-height:340px;overflow-y:auto;padding:8px 0', id: 'demoStream', key: 'demoStream' },
+            ...state.demoRows.map((r, i) => h('div', {
+                key: 'dr' + i,
+                class: 'row',
+                style: 'grid-template-columns:100px 180px 1fr;padding:4px 16px;cursor:default;font-family:var(--ff-mono);font-size:12px'
+            },
+                h('span', { class: 'code' }, r.t),
+                h('span', { style: 'color:var(--panel-accent)' }, r.ev),
+                h('span', { style: 'color:var(--panel-text-2)' }, r.content)
+            ))
+        )
     );
 }
 
@@ -235,6 +266,10 @@ function Overview() {
 
         h('h3', {}, 'receipt'),
         Receipt(),
+
+        h('h3', { id: 'cli' }, 'cli'),
+        h('p', {}, 'one binary. live tail, regex filters, ndjson/sqlite rollups, Unsloth training export, and a turnkey observatory GUI.'),
+        Pre({ children: CLI_SNIPPET }),
 
         h('h3', {}, 'esm / typescript'),
         Pre({ children: ESM_SNIPPET }),
@@ -287,26 +322,14 @@ function ts() {
     return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
-function animateDemo() {
-    const stream = document.getElementById('demoStream');
-    if (!stream) { setTimeout(animateDemo, 200); return; }
-    let i = 0;
-    function add() {
-        const cur = document.getElementById('demoStream');
-        if (!cur) return;
-        if (i >= DEMO.length) { setTimeout(() => { cur.innerHTML = ''; i = 0; add(); }, 2000); return; }
-        const [ev, content] = DEMO[i++];
-        const line = document.createElement('div');
-        line.className = 'row';
-        line.style.cssText = 'grid-template-columns:100px 180px 1fr;padding:4px 16px;cursor:default;font-family:var(--ff-mono);font-size:12px';
-        line.innerHTML =
-            '<span class="code">' + ts() + '</span>' +
-            '<span style="color:var(--panel-accent)">' + ev + '</span>' +
-            '<span style="color:var(--panel-text-2)">' + content + '</span>';
-        cur.appendChild(line);
-        cur.scrollTop = cur.scrollHeight;
-        setTimeout(add, 400 + Math.random() * 600);
-    }
-    add();
+let demoIdx = 0;
+function tickDemo() {
+    if (demoIdx >= DEMO.length) { state.demoRows = []; demoIdx = 0; render(); setTimeout(tickDemo, 1800); return; }
+    const [ev, content] = DEMO[demoIdx++];
+    state.demoRows = state.demoRows.concat([{ t: ts(), ev, content }]).slice(-9);
+    render();
+    const el = document.getElementById('demoStream');
+    if (el) el.scrollTop = el.scrollHeight;
+    setTimeout(tickDemo, 500 + Math.random() * 500);
 }
-animateDemo();
+tickDemo();
