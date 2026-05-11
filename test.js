@@ -5,6 +5,7 @@ import path from 'path';
 import http from 'http';
 import { buildIndex, search, tokenize } from './src/bm25.js';
 import { createServer } from './src/gui-server.js';
+import { toUnslothMessages, toShareGPT } from './src/unsloth.js';
 
 function get(url) {
   return new Promise((res, rej) => {
@@ -89,6 +90,39 @@ async function main() {
     const evs = JSON.parse((await get(srv.url + '/api/events?role=assistant&limit=10')).body);
     assert.ok(evs.total >= 1);
     console.log('ok events filter');
+
+    // unsloth export (messages + sharegpt)
+    const sid = 's1';
+    const conv = { id: sid, cwd: '/x', parentSid: null, isSubagent: false };
+    const evs = [
+      { timestamp: 1, role: 'user', conversation: conv, block: { type: 'text', text: 'find foobar' } },
+      { timestamp: 2, role: 'assistant', conversation: conv, block: { type: 'text', text: 'searching' } },
+      { timestamp: 3, role: 'assistant', conversation: conv, block: { type: 'tool_use', id: 'tu1', name: 'Grep', input: { pattern: 'foobar' } } },
+      { timestamp: 4, role: 'user', conversation: conv, block: { type: 'tool_result', tool_use_id: 'tu1', content: 'hit at line 3' } },
+      { timestamp: 5, role: 'assistant', conversation: conv, block: { type: 'text', text: 'done' } },
+    ];
+    const msgs = toUnslothMessages(evs);
+    assert.equal(msgs.length, 1);
+    const m = msgs[0].messages;
+    assert.equal(m[0].role, 'user');
+    assert.equal(m[1].role, 'assistant');
+    assert.ok(m[1].tool_calls && m[1].tool_calls[0].function.name === 'Grep');
+    assert.equal(JSON.parse(m[1].tool_calls[0].function.arguments).pattern, 'foobar');
+    const toolMsg = m.find(x => x.role === 'tool');
+    assert.ok(toolMsg && toolMsg.tool_call_id === 'tu1');
+    const line = JSON.stringify(msgs[0]);
+    assert.equal(JSON.parse(line).session_id, sid);
+    console.log('ok unsloth messages');
+    const sg = toShareGPT(evs);
+    assert.equal(sg.length, 1);
+    const turns = sg[0].conversations;
+    assert.equal(turns[0].from, 'human');
+    assert.ok(turns.some(t => t.from === 'gpt' && t.value.includes('<tool_call>Grep')));
+    assert.ok(turns.some(t => t.from === 'tool'));
+    console.log('ok unsloth sharegpt');
+    // skip sessions with no training value
+    assert.equal(toUnslothMessages([{ timestamp: 1, role: 'system', conversation: conv, block: { type: 'system' } }]).length, 0);
+    console.log('ok unsloth skips empty');
 
     // static index
     const idxRes = await get(srv.url + '/');
