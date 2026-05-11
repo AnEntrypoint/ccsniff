@@ -67,6 +67,21 @@ Two formats are supported via `--unsloth-format`:
 
 Sessions with no user/assistant turn pair are skipped (no training value).
 
+## GUI (Observatory)
+
+A turnkey, zero-dep browser observatory ships with the package. It indexes
+every session in `~/.claude/projects` and exposes sessions, projects, tools,
+timeline, errors, subagent tree, live stream, and BM25 full-text search.
+
+```bash
+npx ccsniff gui --open          # auto-open in default browser
+npx ccsniff gui --port 4791     # custom port (default 4791)
+```
+
+Endpoints under `/api/*`: `snapshot`, `sessions`, `projects`, `tools`,
+`timeline`, `stats`, `errors`, `subagents`, `events`, `search`, `stream`
+(SSE).
+
 ## API
 
 ### `watch(projectsDir?)` → `JsonlWatcher`

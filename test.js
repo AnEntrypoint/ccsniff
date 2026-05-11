@@ -92,28 +92,34 @@ async function main() {
     console.log('ok events filter');
 
     // unsloth export (messages + sharegpt)
-    const sid = 's1';
-    const conv = { id: sid, cwd: '/x', parentSid: null, isSubagent: false };
-    const evs = [
-      { timestamp: 1, role: 'user', conversation: conv, block: { type: 'text', text: 'find foobar' } },
+    const usid = 's1';
+    const conv = { id: usid, cwd: '/x', parentSid: null, isSubagent: false };
+    const uevs = [
+      { timestamp: 1, role: 'user', conversation: conv, block: { type: 'text', text: 'find foobar <system-reminder>ignore this</system-reminder> please' } },
       { timestamp: 2, role: 'assistant', conversation: conv, block: { type: 'text', text: 'searching' } },
-      { timestamp: 3, role: 'assistant', conversation: conv, block: { type: 'tool_use', id: 'tu1', name: 'Grep', input: { pattern: 'foobar' } } },
-      { timestamp: 4, role: 'user', conversation: conv, block: { type: 'tool_result', tool_use_id: 'tu1', content: 'hit at line 3' } },
-      { timestamp: 5, role: 'assistant', conversation: conv, block: { type: 'text', text: 'done' } },
+      { timestamp: 3, role: 'assistant', conversation: conv, block: { type: 'thinking', thinking: 'should not leak' } },
+      { timestamp: 4, role: 'assistant', conversation: conv, block: { type: 'tool_use', id: 'tu1', name: 'Grep', input: { pattern: 'foobar' } } },
+      { timestamp: 5, role: 'user', conversation: conv, block: { type: 'tool_result', tool_use_id: 'tu1', content: 'hit at line 3' } },
+      { timestamp: 6, role: 'assistant', conversation: conv, block: { type: 'text', text: 'done' } },
     ];
-    const msgs = toUnslothMessages(evs);
+    const msgs = toUnslothMessages(uevs);
     assert.equal(msgs.length, 1);
     const m = msgs[0].messages;
     assert.equal(m[0].role, 'user');
+    assert.ok(!m[0].content.includes('system-reminder'), 'system-reminder stripped from user text');
+    assert.ok(!m[0].content.includes('ignore this'), 'system-reminder body stripped');
     assert.equal(m[1].role, 'assistant');
     assert.ok(m[1].tool_calls && m[1].tool_calls[0].function.name === 'Grep');
     assert.equal(JSON.parse(m[1].tool_calls[0].function.arguments).pattern, 'foobar');
     const toolMsg = m.find(x => x.role === 'tool');
     assert.ok(toolMsg && toolMsg.tool_call_id === 'tu1');
-    const line = JSON.stringify(msgs[0]);
-    assert.equal(JSON.parse(line).session_id, sid);
+    const lineStr = JSON.stringify(msgs[0]);
+    assert.equal(JSON.parse(lineStr).session_id, usid);
+    assert.ok(!lineStr.includes('"type":"tool_use"'), 'no raw tool_use envelope');
+    assert.ok(!lineStr.includes('"type":"thinking"'), 'no thinking envelope');
+    assert.ok(!lineStr.includes('<system-reminder>'), 'no system-reminder leak');
     console.log('ok unsloth messages');
-    const sg = toShareGPT(evs);
+    const sg = toShareGPT(uevs);
     assert.equal(sg.length, 1);
     const turns = sg[0].conversations;
     assert.equal(turns[0].from, 'human');

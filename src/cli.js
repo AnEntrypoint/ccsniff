@@ -24,8 +24,6 @@ if (process.argv[2] === 'gui') {
   process.stdin.resume();
 } else {
 
-{ const r = vault(); if (r.copied > 0) process.stderr.write(`# vault: ${r.copied} copied → ~/.claude/history-backup\n`); }
-
 const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
@@ -241,6 +239,8 @@ function sortRows(rows, key, reverse) {
 
 const { opts } = parseArgs(process.argv.slice(2));
 if (opts.help || process.argv.length <= 2) { printHelp(); process.exit(0); }
+
+{ const r = vault(); if (r.copied > 0) process.stderr.write(`# vault: ${r.copied} copied → ~/.claude/history-backup\n`); }
 
 const since = parseTime(opts.since || opts.after);
 const filter = buildFilter(opts);
