@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { JsonlReplayer, rollup, vault } from './index.js';
+import { toUnslothMessages, toShareGPT } from './unsloth.js';
+import fs from 'fs';
 import path from 'path';
 
 if (process.argv[2] === 'gui') {
@@ -25,7 +27,7 @@ if (process.argv[2] === 'gui') {
 { const r = vault(); if (r.copied > 0) process.stderr.write(`# vault: ${r.copied} copied → ~/.claude/history-backup\n`); }
 
 const FLAGS = {
-  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort'],
+  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
   bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'stats', 'count', 'help', 'h'],
@@ -99,6 +101,8 @@ OUTPUT
   -f, --tail             live tail after replay
   --rollup <out>         dump filtered events to file
   --format ndjson|sqlite rollup format (default ndjson; sqlite needs better-sqlite3)
+  --unsloth <out>        write Unsloth training JSONL (one conversation per session per line)
+  --unsloth-format <fmt> messages (OpenAI/ChatML, default) | sharegpt
 
 EXAMPLES
   ccsniff --since 24h --grep "rs-exec" --limit 50
@@ -357,6 +361,15 @@ if (opts.stats) {
 
 if (opts.count) {
   process.stdout.write(`${rows.length}\n`);
+  process.exit(0);
+}
+
+if (opts.unsloth) {
+  const fmt = opts['unsloth-format'] || 'messages';
+  const recs = fmt === 'sharegpt' ? toShareGPT(rows) : toUnslothMessages(rows);
+  const body = recs.map(r => JSON.stringify(r)).join('\n') + (recs.length ? '\n' : '');
+  fs.writeFileSync(opts.unsloth, body);
+  process.stderr.write(`# unsloth(${fmt}): ${recs.length} conversations → ${opts.unsloth}\n`);
   process.exit(0);
 }
 

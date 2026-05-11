@@ -40,7 +40,32 @@ npx ccsniff --since 24h --grep "rs-exec" --limit 50
 npx ccsniff --since 7d --role user --json
 npx ccsniff -f                     # tail new events live
 npx ccsniff --rollup out.ndjson --since 7d
+npx ccsniff --unsloth train.jsonl --since 7d --no-subagents
+npx ccsniff --unsloth train.jsonl --unsloth-format sharegpt --since 7d
 ```
+
+### Unsloth training export
+
+`--unsloth <out>` writes one JSONL line per Claude Code session, ready for
+Unsloth / TRL conversational fine-tuning. All filter flags (`--since`,
+`--project`, `--session`, `--no-subagents`, ...) apply.
+
+Two formats are supported via `--unsloth-format`:
+
+- `messages` (default) — OpenAI / ChatML shape with native tool calling:
+  ```json
+  {"session_id":"...","messages":[
+    {"role":"user","content":"find foobar"},
+    {"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"Grep","arguments":"{\"pattern\":\"foobar\"}"}}]},
+    {"role":"tool","tool_call_id":"tu1","content":"hit at line 3"},
+    {"role":"assistant","content":"done"}
+  ]}
+  ```
+- `sharegpt` — `{conversations:[{from:human|gpt|tool, value}]}`, compatible
+  with `standardize_sharegpt`. Tool calls are inlined into the `gpt` turn as
+  `<tool_call>name(json-args)</tool_call>`.
+
+Sessions with no user/assistant turn pair are skipped (no training value).
 
 ## API
 
