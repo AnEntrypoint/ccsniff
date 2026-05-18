@@ -4,9 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { JsonlReplayer, JsonlWatcher } from './index.js';
 import { buildIndex, search, snippet, tokenize } from './bm25.js';
+import { DEFAULT_PRESETS, DEFAULT_ACTIVE } from './filters.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GUI_DIR = path.join(__dirname, '..', 'gui');
+
+export const DEFAULT_FILTERS = { active: DEFAULT_ACTIVE, presets: DEFAULT_PRESETS };
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 function blockText(b) {
@@ -34,6 +37,7 @@ function flattenEvent(ev, idx) {
     tool: b.name || null,
     text: blockText(b),
     isError: !!b.is_error || ev.role === 'streaming_error',
+    isMeta: !!b.isMeta,
     cost: b.total_cost_usd || null,
     duration: b.duration_ms || null,
     subtype: b.subtype || null,
@@ -223,20 +227,42 @@ class Store {
     return out;
   }
 
-  events_filtered({ role, type, project, sid, tool, since, until, limit = 200, offset = 0, q } = {}) {
+  events_filtered({ role, type, project, sid, tool, since, until, limit = 200, offset = 0, q, grep, igrep, isMeta, isSubagent, isError, parent } = {}) {
     let arr = this.events;
+    let greRe = null, igreRe = null;
+    try {
+      if (grep) greRe = new RegExp(grep, 'i');
+      if (igrep) igreRe = new RegExp(igrep, 'i');
+    } catch (e) {
+      return { total: 0, rows: [], error: `invalid regex: ${e.message}` };
+    }
     if (q) {
-      const tokens = new Set(tokenize(q));
-      arr = arr.filter(e => { const t = tokenize(e.text); return [...tokens].every(x => t.includes(x)); });
+      const tokens = [...new Set(tokenize(q))];
+      if (tokens.length) {
+        arr = arr.filter(e => { const t = tokenize(e.text); return tokens.every(x => t.includes(x)); });
+      } else {
+        // q tokenized to nothing (too short / stopwords) → substring fallback
+        const needle = String(q).toLowerCase();
+        arr = arr.filter(e => (e.text || '').toLowerCase().includes(needle));
+      }
     }
     arr = arr.filter(e => {
       if (role && e.role !== role) return false;
       if (type && e.type !== type) return false;
       if (project && e.project !== project) return false;
       if (sid && !e.sid.startsWith(sid)) return false;
+      if (parent && e.parent !== parent) return false;
       if (tool && e.tool !== tool) return false;
       if (since && e.ts < since) return false;
       if (until && e.ts > until) return false;
+      if (isMeta === true && !e.isMeta) return false;
+      if (isMeta === false && e.isMeta) return false;
+      if (isSubagent === true && !e.isSubagent) return false;
+      if (isSubagent === false && e.isSubagent) return false;
+      if (isError === true && !e.isError) return false;
+      if (isError === false && e.isError) return false;
+      if (greRe && !greRe.test(e.text || '')) return false;
+      if (igreRe && igreRe.test(e.text || '')) return false;
       return true;
     });
     return { total: arr.length, rows: arr.slice(offset, offset + limit) };
@@ -260,14 +286,36 @@ function serveStatic(req, res) {
   });
 }
 
+function parseRelTime(s) {
+  if (s === null || s === undefined || s === '') return 0;
+  const str = String(s).trim();
+  if (/^\d{10,}$/.test(str)) return parseInt(str, 10);
+  const m = /^(\d+)\s*([smhdw])$/i.exec(str);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const mult = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[m[2].toLowerCase()];
+    return Date.now() - n * mult;
+  }
+  const t = Date.parse(str);
+  return Number.isFinite(t) ? t : 0;
+}
+function parseBool(v) {
+  if (v === undefined) return undefined;
+  if (v === 'true' || v === '1') return true;
+  if (v === 'false' || v === '0') return false;
+  return undefined;
+}
 function parseQuery(u) {
   const q = {};
   for (const [k, v] of u.searchParams) q[k] = v;
-  if (q.limit) q.limit = parseInt(q.limit, 10);
-  if (q.offset) q.offset = parseInt(q.offset, 10);
-  if (q.since) q.since = parseInt(q.since, 10);
-  if (q.until) q.until = parseInt(q.until, 10);
-  if (q.bucket) q.bucket = parseInt(q.bucket, 10);
+  if (q.limit !== undefined) q.limit = parseInt(q.limit, 10) || 200;
+  if (q.offset !== undefined) q.offset = parseInt(q.offset, 10) || 0;
+  if (q.since !== undefined) q.since = parseRelTime(q.since);
+  if (q.until !== undefined) q.until = parseRelTime(q.until);
+  if (q.bucket !== undefined) q.bucket = parseInt(q.bucket, 10) || 0;
+  for (const k of ['isMeta', 'isSubagent', 'isError']) {
+    if (q[k] !== undefined) q[k] = parseBool(q[k]);
+  }
   return q;
 }
 
@@ -291,6 +339,7 @@ export function createServer({ projectsDir, port = 0, host = '127.0.0.1' } = {})
       if (path === '/api/errors') return send(res, 200, store.errorsList());
       if (path === '/api/subagents') return send(res, 200, store.subagents());
       if (path === '/api/events') return send(res, 200, store.events_filtered(q));
+      if (path === '/api/defaults') return send(res, 200, DEFAULT_FILTERS);
       if (path === '/api/search') return send(res, 200, { query: q.q || '', results: q.q ? store.search(q.q, q) : [] });
       if (path === '/api/reindex') { store.rebuildIndex(); return send(res, 200, { ok: true, at: store.lastBuilt }); }
       if (path === '/api/stream') {

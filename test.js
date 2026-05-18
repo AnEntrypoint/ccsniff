@@ -91,6 +91,104 @@ async function main() {
     assert.ok(evs.total >= 1);
     console.log('ok events filter');
 
+    // GUI filter coverage
+    const evTool = JSON.parse((await get(srv.url + '/api/events?tool=Grep')).body);
+    assert.ok(evTool.rows.every(r => r.tool === 'Grep'), 'tool filter excludes non-Grep');
+    assert.ok(evTool.total >= 1, 'tool filter finds Grep');
+
+    const evType = JSON.parse((await get(srv.url + '/api/events?type=tool_use')).body);
+    assert.ok(evType.rows.every(r => r.type === 'tool_use'), 'type filter');
+
+    const evSince = JSON.parse((await get(srv.url + '/api/events?since=1h')).body);
+    assert.ok(evSince.total >= 1, 'relative since=1h works');
+    const evSinceFuture = JSON.parse((await get(srv.url + '/api/events?until=' + (Date.now() - 3600_000))).body);
+    assert.equal(evSinceFuture.total, 0, 'until=1h-ago excludes just-loaded events');
+
+    const evGrep = JSON.parse((await get(srv.url + '/api/events?grep=foobar')).body);
+    assert.ok(evGrep.total >= 1 && evGrep.rows.every(r => /foobar/i.test(r.text)), 'grep regex');
+
+    const evIgrep = JSON.parse((await get(srv.url + '/api/events?igrep=foobar')).body);
+    assert.ok(evIgrep.rows.every(r => !/foobar/i.test(r.text)), 'igrep regex excludes');
+
+    const evBadRe = JSON.parse((await get(srv.url + '/api/events?grep=%5B')).body);
+    assert.ok(evBadRe.error && /invalid regex/.test(evBadRe.error), 'invalid regex error surfaced');
+
+    // q substring fallback — 'ok' is 2 chars but a stopword-like; pick a short token under tokenizer's 2-char limit
+    const evQ1 = JSON.parse((await get(srv.url + '/api/events?q=foobar')).body);
+    assert.ok(evQ1.total >= 1, 'tokenized q works');
+    const evQ2 = JSON.parse((await get(srv.url + '/api/events?q=a')).body); // 1 char → empty tokens → substring fallback
+    assert.ok(evQ2.total >= 1, 'q substring fallback for sub-tokenizer queries');
+
+    const defs = JSON.parse((await get(srv.url + '/api/defaults')).body);
+    assert.ok(Array.isArray(defs.presets) && defs.presets.length >= 4, 'defaults exposes presets');
+    assert.ok(defs.presets.find(p => p.id === 'errors'), 'errors preset exists');
+    console.log('ok gui filter suite');
+
+    // CLI buildFilter / parseTime unit tests
+    const { buildFilter, parseTime, compileRegexes } = await import('./src/filters.js');
+    const mkOpts = (o = {}) => ({ _multi: { grep: [], igrep: [], role: [], type: [], tool: [], session: [], sid: [], project: [], cwd: [], parent: [] }, ...o });
+    const baseEv = (over = {}) => ({ timestamp: Date.now(), role: 'assistant', conversation: { id: 'sid1', cwd: '/repo/proj', isSubagent: false, parentSid: null }, block: { type: 'text', text: 'hello world' }, ...over });
+
+    // role filter
+    const fRole = buildFilter(mkOpts({ _multi: { ...mkOpts()._multi, role: ['user'] } }));
+    assert.equal(fRole(baseEv()), false, 'role=user excludes assistant');
+    assert.equal(fRole(baseEv({ role: 'user' })), true, 'role=user includes user');
+
+    // grep + igrep combination
+    const fGrep = buildFilter(mkOpts({ _multi: { ...mkOpts()._multi, grep: ['hello'], igrep: ['world'] } }));
+    assert.equal(fGrep(baseEv()), false, 'grep matches but igrep also matches → exclude');
+    assert.equal(fGrep(baseEv({ block: { type: 'text', text: 'hello there' } })), true, 'grep matches, igrep does not → include');
+
+    // multi-grep AND
+    const fGrep2 = buildFilter(mkOpts({ _multi: { ...mkOpts()._multi, grep: ['hello', 'world'] } }));
+    assert.equal(fGrep2(baseEv()), true);
+    assert.equal(fGrep2(baseEv({ block: { type: 'text', text: 'hello' } })), false, 'multi-grep is AND');
+
+    // invert
+    const fInv = buildFilter(mkOpts({ invert: true, _multi: { ...mkOpts()._multi, role: ['user'] } }));
+    assert.equal(fInv(baseEv()), true, 'invert flips exclude → include');
+
+    // since / until
+    const past = Date.now() - 60_000;
+    const fSince = buildFilter(mkOpts({ since: '30s' }));
+    assert.equal(fSince(baseEv({ timestamp: past })), false, '60s-old ev excluded by since=30s');
+    assert.equal(fSince(baseEv()), true);
+
+    // project exact match
+    const fProj = buildFilter(mkOpts({ _multi: { ...mkOpts()._multi, project: ['proj'] } }));
+    assert.equal(fProj(baseEv()), true);
+    assert.equal(fProj(baseEv({ conversation: { id: 's', cwd: '/x/other' } })), false);
+
+    // no-meta / only-meta
+    const fNoMeta = buildFilter(mkOpts({ 'no-meta': true }));
+    assert.equal(fNoMeta(baseEv({ block: { type: 'text', text: 't', isMeta: true } })), false);
+    assert.equal(fNoMeta(baseEv()), true);
+    const fOnlyMeta = buildFilter(mkOpts({ 'only-meta': true }));
+    assert.equal(fOnlyMeta(baseEv()), false);
+    assert.equal(fOnlyMeta(baseEv({ block: { type: 'text', text: 't', isMeta: true } })), true);
+
+    // subagents
+    const fNoSub = buildFilter(mkOpts({ 'no-subagents': true }));
+    assert.equal(fNoSub(baseEv({ conversation: { id: 's', cwd: '/x', isSubagent: true } })), false);
+    assert.equal(fNoSub(baseEv()), true);
+
+    // multi-sid OR
+    const fSid = buildFilter(mkOpts({ _multi: { ...mkOpts()._multi, sid: ['aaa', 'bbb'] } }));
+    assert.equal(fSid(baseEv({ conversation: { id: 'aaa123', cwd: '/x' } })), true);
+    assert.equal(fSid(baseEv({ conversation: { id: 'bbb999', cwd: '/x' } })), true);
+    assert.equal(fSid(baseEv({ conversation: { id: 'ccc000', cwd: '/x' } })), false);
+
+    // parseTime errors loudly
+    assert.equal(parseTime(''), 0);
+    assert.equal(parseTime(null), 0);
+    assert.throws(() => parseTime('garbage'), /invalid time/);
+    assert.ok(parseTime('1h') > 0);
+    assert.ok(parseTime('1H') > 0, 'case-insensitive units');
+
+    // compileRegexes errors loudly
+    assert.throws(() => compileRegexes(['[']), /invalid regex/);
+    console.log('ok cli filter suite');
+
     // unsloth export (messages + sharegpt)
     const usid = 's1';
     const conv = { id: usid, cwd: '/x', parentSid: null, isSubagent: false };

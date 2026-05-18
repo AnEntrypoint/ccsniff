@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { JsonlReplayer, rollup, vault } from './index.js';
 import { toUnslothMessages, toShareGPT } from './unsloth.js';
+import { parseTime, compileRegexes, buildFilter } from './filters.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -69,7 +70,7 @@ TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
 
 FILTERS (repeatable flags combine as OR within a flag, AND across flags)
   --grep <re>            text regex (case-insensitive); repeat = AND
-  --igrep <re>           inverted text regex; repeat = AND (none must match)
+  --igrep <re>           exclude if regex matches text; repeat = exclude if ANY matches
   --invert               invert the entire filter result
   --cwd <re>             working-dir regex
   --project <name>       basename(cwd) exact match; repeat = OR
@@ -114,21 +115,6 @@ EXAMPLES
 `);
 }
 
-function parseTime(s) {
-  if (!s) return 0;
-  if (/^\d{10,}$/.test(s)) return parseInt(s, 10);
-  const m = /^(\d+)([smhdw])$/.exec(s);
-  if (m) {
-    const n = parseInt(m[1], 10);
-    const mult = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[m[2]];
-    return Date.now() - n * mult;
-  }
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : 0;
-}
-
-function compileRegexes(arr) { return arr.map(s => new RegExp(s, 'i')); }
-
 function blockText(b) {
   if (!b) return '';
   if (typeof b.text === 'string') return b.text;
@@ -136,46 +122,6 @@ function blockText(b) {
   if (Array.isArray(b.content)) return b.content.map(c => c?.text || '').join('');
   if (b.input) return JSON.stringify(b.input);
   return '';
-}
-
-function buildFilter(opts) {
-  const since = parseTime(opts.since || opts.after);
-  const until = parseTime(opts.until || opts.before);
-  const greps = compileRegexes(opts._multi.grep);
-  const igreps = compileRegexes(opts._multi.igrep);
-  const cwdRes = compileRegexes(opts._multi.cwd);
-  const projects = new Set(opts._multi.project);
-  const roles = new Set(opts._multi.role);
-  const types = new Set(opts._multi.type);
-  const tools = new Set(opts._multi.tool);
-  const sids = opts._multi.session.concat(opts._multi.sid || []);
-  const parent = opts.parent || null;
-
-  return ev => {
-    const conv = ev.conversation || {};
-    const block = ev.block || {};
-    const ts = ev.timestamp || 0;
-    let pass = true;
-    if (since && ts < since) pass = false;
-    else if (until && ts > until) pass = false;
-    else if (cwdRes.length && !cwdRes.every(r => r.test(conv.cwd || ''))) pass = false;
-    else if (projects.size && !projects.has(path.basename(conv.cwd || ''))) pass = false;
-    else if (roles.size && !roles.has(ev.role)) pass = false;
-    else if (types.size && !types.has(block.type)) pass = false;
-    else if (tools.size && !tools.has(block.name)) pass = false;
-    else if (sids.length && !sids.some(s => conv.id?.startsWith(s))) pass = false;
-    else if (parent && conv.parentSid !== parent) pass = false;
-    else if (opts['no-subagents'] && conv.isSubagent) pass = false;
-    else if (opts['only-subagents'] && !conv.isSubagent) pass = false;
-    else if (opts['no-meta'] && block.isMeta) pass = false;
-    else if (opts['only-meta'] && !block.isMeta) pass = false;
-    else {
-      const text = blockText(block);
-      if (greps.length && !greps.every(r => r.test(text))) pass = false;
-      else if (igreps.length && igreps.some(r => r.test(text))) pass = false;
-    }
-    return opts.invert ? !pass : pass;
-  };
 }
 
 function formatRow(ev, opts) {
@@ -242,8 +188,14 @@ if (opts.help || process.argv.length <= 2) { printHelp(); process.exit(0); }
 
 { const r = vault(); if (r.copied > 0) process.stderr.write(`# vault: ${r.copied} copied → ~/.claude/history-backup\n`); }
 
-const since = parseTime(opts.since || opts.after);
-const filter = buildFilter(opts);
+let since, filter;
+try {
+  since = parseTime(opts.since || opts.after);
+  filter = buildFilter(opts);
+} catch (e) {
+  process.stderr.write(`ccsniff: ${e.message}\n`);
+  process.exit(2);
+}
 
 // ---------- rollup (filtered)
 if (opts.rollup) {

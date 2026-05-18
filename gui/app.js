@@ -1,6 +1,6 @@
 import { mount, components as C, h } from 'anentrypoint-design';
 
-const TABS = ['overview', 'sessions', 'projects', 'tools', 'timeline', 'errors', 'subagents', 'live', 'search'];
+const TABS = ['overview', 'sessions', 'projects', 'tools', 'timeline', 'errors', 'subagents', 'events', 'live', 'search'];
 const state = {
   tab: 'overview',
   data: { snapshot: null, sessions: [], projects: [], tools: [], timeline: [], stats: null, errors: [], subagents: [] },
@@ -8,6 +8,9 @@ const state = {
   searchResults: [],
   searching: false,
   liveLog: [],
+  defaults: { active: 'recent', presets: [] },
+  activePreset: 'recent',
+  events: { total: 0, rows: [], loading: false },
 };
 
 const api = (p) => fetch(p).then(r => r.json());
@@ -144,13 +147,78 @@ function SubagentsView() {
   ) });
 }
 
-function LiveView() {
-  return C.Panel({ head: `live · ${state.liveLog.length} events (last 200)`, children: h('div', { class: 'live' },
-    ...state.liveLog.slice().reverse().map((e, i) => h('div', { key: i, class: 'e' },
-      h('span', { class: 'ts' }, ts(e.ts || Date.now()).slice(11)),
-      h('span', { class: 'k' }, e._kind || 'event'),
-      h('span', {}, fmtLive(e)),
+function PresetChips() {
+  const presets = state.defaults.presets || [];
+  return h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px' },
+    ...presets.map(p => h('span', {
+      class: 'pill' + (p.id === state.activePreset ? ' accent' : ''),
+      style: 'cursor:pointer;user-select:none;' + (p.id === state.activePreset ? 'outline:1px solid currentColor' : ''),
+      onclick: () => { state.activePreset = p.id; loadEvents(); },
+    }, p.label)),
+  );
+}
+
+function currentPresetQuery() {
+  const p = (state.defaults.presets || []).find(x => x.id === state.activePreset);
+  return p?.query || {};
+}
+
+async function loadEvents() {
+  state.events.loading = true; render();
+  const q = currentPresetQuery();
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
+  params.set('limit', '200');
+  const r = await api('/api/events?' + params.toString());
+  state.events = { total: r.total || 0, rows: r.rows || [], loading: false, error: r.error || null };
+  render();
+}
+
+function EventsView() {
+  const rows = state.events.rows;
+  return C.Panel({ head: `events · ${state.events.total} match · showing ${rows.length}`, children: h('div', {},
+    PresetChips(),
+    state.events.error ? h('div', { class: 'err', style: 'padding:8px 12px' }, state.events.error) : null,
+    h('div', { class: 'row-grid', style: 'grid-template-columns:140px 80px 110px 100px 1fr;opacity:.55' },
+      h('span', {}, 'when'), h('span', {}, 'role'), h('span', {}, 'type'), h('span', {}, 'tool'), h('span', {}, 'text')),
+    ...rows.map(e => h('div', { class: 'row-grid', style: 'grid-template-columns:140px 80px 110px 100px 1fr' },
+      h('span', {}, ts(e.ts).slice(5)),
+      h('span', {}, e.role || '—'),
+      h('span', {}, e.type || '—'),
+      h('span', { class: 'accent' }, e.tool || '—'),
+      h('span', { class: 'truncate' + (e.isError ? ' err' : '') },
+        h('span', { class: 'pill' }, e.project || '—'),
+        ' ',
+        (e.text || '').slice(0, 400)),
     )),
+  ) });
+}
+
+function liveMatches(e) {
+  const q = currentPresetQuery();
+  if (q.role && e.role !== q.role) return false;
+  if (q.type && e.type !== q.type) return false;
+  if (q.tool && e.tool !== q.tool) return false;
+  if (q.project && e.project !== q.project) return false;
+  if (q.isMeta === true && !e.isMeta) return false;
+  if (q.isMeta === false && e.isMeta) return false;
+  if (q.isSubagent === true && !e.isSubagent) return false;
+  if (q.isSubagent === false && e.isSubagent) return false;
+  if (q.isError === true && !e.isError) return false;
+  return true;
+}
+
+function LiveView() {
+  const filtered = state.liveLog.filter(e => e._kind !== 'event' || liveMatches(e));
+  return C.Panel({ head: `live · ${filtered.length}/${state.liveLog.length} events (preset: ${state.activePreset})`, children: h('div', {},
+    PresetChips(),
+    h('div', { class: 'live' },
+      ...filtered.slice().reverse().map((e, i) => h('div', { key: i, class: 'e' },
+        h('span', { class: 'ts' }, ts(e.ts || Date.now()).slice(11)),
+        h('span', { class: 'k' }, e._kind || 'event'),
+        h('span', {}, fmtLive(e)),
+      )),
+    ),
   ) });
 }
 
@@ -192,7 +260,7 @@ async function doSearch() {
   state.searching = false; render();
 }
 
-const VIEWS = { overview: Overview, sessions: SessionsView, projects: ProjectsView, tools: ToolsView, timeline: TimelineView, errors: ErrorsView, subagents: SubagentsView, live: LiveView, search: SearchView };
+const VIEWS = { overview: Overview, sessions: SessionsView, projects: ProjectsView, tools: ToolsView, timeline: TimelineView, errors: ErrorsView, subagents: SubagentsView, events: EventsView, live: LiveView, search: SearchView };
 
 function App() {
   const s = state.data.snapshot || {};
@@ -201,7 +269,7 @@ function App() {
       brand: '247420', leaf: 'ccsniff',
       items: TABS.map(t => [t, '#/' + t]),
       active: state.tab,
-      onNav: (t) => { state.tab = t; location.hash = '#/' + t; render(); },
+      onNav: (t) => { state.tab = t; location.hash = '#/' + t; render(); if (t === 'events') loadEvents(); },
     }),
     main: h('div', { style: 'padding:16px;display:flex;flex-direction:column;gap:16px' },
       C.Crumb({ trail: ['247420', 'ccsniff'], leaf: state.tab, right: h('span', { class: 'pill' }, n(s.events) + ' events') }),
@@ -224,7 +292,13 @@ render();
 })();
 
 (async function init() {
+  try {
+    const d = await api('/api/defaults');
+    state.defaults = d || state.defaults;
+    state.activePreset = d?.active || state.activePreset;
+  } catch {}
   await loadAll();
+  if (state.tab === 'events') loadEvents();
   setInterval(loadAll, 15_000);
   const sse = new EventSource('/api/stream');
   const push = (kind, data) => {
