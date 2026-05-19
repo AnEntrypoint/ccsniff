@@ -33,6 +33,20 @@ CommonJS:
 const { watch, JsonlWatcher } = require('ccsniff');
 ```
 
+## Mountable Express router (`/v1/history/*`)
+
+ccsniff ships a mountable router that hosts all the read-only history endpoints used by AgentGUI's live client (`/v1/history/snapshot`, `/sessions`, `/sessions/:sid/events`, `/search`, `/stream` SSE, and `POST /reindex`). It reads `~/.claude/projects` by default; override with the `CLAUDE_PROJECTS_DIR` env var. `express` is an optional peer dependency — install it in the host app.
+
+```js
+import express from 'express';
+import { createHistoryRouter } from 'ccsniff';
+
+const app = express();
+app.use(await createHistoryRouter({ projectsDir: process.env.CLAUDE_PROJECTS_DIR }));
+app.listen(3000);
+```
+
+
 ## CLI
 
 ```bash

@@ -3,7 +3,8 @@ import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
 
-const DEFAULT_DIR = path.join(os.homedir(), '.claude', 'projects');
+const DEFAULT_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
+export { DEFAULT_DIR };
 const DEBOUNCE_MS = 16;
 
 export class JsonlWatcher extends EventEmitter {
@@ -264,6 +265,9 @@ export function vault({ projectsDir = DEFAULT_DIR, destDir = path.join(os.homedi
   walk(projectsDir, 0);
   return { copied, skipped };
 }
+
+export { Store, getStore, flattenEvent, blockText, DEFAULT_PROJECTS_DIR } from './store.js';
+export { createHistoryRouter } from './router.js';
 
 export async function rollup({ projectsDir, since = 0, out, format = 'ndjson' } = {}) {
   if (!out) throw new Error('rollup: out path required');
