@@ -29,7 +29,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -62,6 +62,7 @@ USAGE
   ccsniff --list-sessions [filters]
   ccsniff --list-projects
   ccsniff --list-tools
+  ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
   ccsniff --stats [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
@@ -234,6 +235,38 @@ if (opts['list-projects']) {
     process.stdout.write(`${new Date(x.last).toISOString().slice(0, 19)}  ${String(x.sessions.size).padStart(4)} sess  ${String(x.events).padStart(7)} ev  ${p}\n`);
   }
   process.stderr.write(`# ${rows.length} projects\n`);
+  process.exit(0);
+}
+
+// ---------- bash-discipline (flag Bash calls that should have been Read/Glob/Grep/dispatch)
+if (opts['bash-discipline']) {
+  const BAD_LEADING = /^\s*(cat|head|tail|ls|grep|find|sed|awk|echo)\b/;
+  const SLEEP_POLL = /\bsleep\s+\d+\s*;.*(cat|ls|grep|find|head|tail)/;
+  const violations = [];
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use' || ev.block?.name !== 'Bash') continue;
+    const cmd = ev.block?.input?.command || '';
+    const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
+    if (!kind) continue;
+    violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
+  }
+  const byKind = new Map();
+  for (const v of violations) byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1);
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} bash-discipline violations\n`);
+    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(15)} [${v.project}]  ${v.cmd}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations (${[...byKind.entries()].map(([k, c]) => `${k}:${c}`).join(' ')})\n`);
   process.exit(0);
 }
 
