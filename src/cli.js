@@ -248,6 +248,11 @@ if (opts['bash-discipline']) {
   const BAD_LEADING = /^\s*(cat|head|tail|ls|grep|find|sed|awk)\b/;
   const SLEEP_POLL = /\bsleep\s+\d+\s*;.*(cat|ls|grep|find|head|tail)/;
   const SPOOL_WRITE = /\.gm\/exec-spool\/in\//;
+  // The host harness explicitly endorses `until <check>; do sleep N; done` as
+  // the canonical pattern for polling external state (see Bash tool description
+  // and Monitor docs). Same for `while !curl ...; do sleep N; done`. These are
+  // NOT sleep-poll violations even though they contain `sleep N`.
+  const ENDORSED_POLL = /^\s*(until|while)\s+/;
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -256,6 +261,8 @@ if (opts['bash-discipline']) {
     const cmd = ev.block?.input?.command || '';
     // `echo > .gm/exec-spool/in/<verb>/N.txt` is the canonical spool-write pattern, not a deviation.
     if (SPOOL_WRITE.test(cmd) && /^\s*echo\b/.test(cmd)) continue;
+    // `until ...; do sleep N; done` is the harness-endorsed poll pattern.
+    if (ENDORSED_POLL.test(cmd)) continue;
     const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
     if (!kind) continue;
     violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
