@@ -46,6 +46,9 @@ export function buildFilter(opts) {
   const types = new Set(m.type || []);
   const tools = new Set(m.tool || []);
   const sids = (m.session || []).concat(m.sid || []);
+  const excludeSids = (m['exclude-sess'] || []).concat(m['exclude-sid'] || []);
+  const excludeCwdRes = compileRegexes(m['exclude-cwd']);
+  const excludeProjects = new Set(m['exclude-project'] || []);
   const parent = opts.parent || null;
 
   return ev => {
@@ -61,6 +64,9 @@ export function buildFilter(opts) {
     else if (types.size && !types.has(block.type)) pass = false;
     else if (tools.size && !tools.has(block.name)) pass = false;
     else if (sids.length && !sids.some(s => conv.id?.startsWith(s))) pass = false;
+    else if (excludeSids.length && excludeSids.some(s => conv.id?.startsWith(s))) pass = false;
+    else if (excludeCwdRes.length && excludeCwdRes.some(r => r.test(conv.cwd || ''))) pass = false;
+    else if (excludeProjects.size && excludeProjects.has(path.basename(conv.cwd || ''))) pass = false;
     else if (parent && conv.parentSid !== parent) pass = false;
     else if (opts['no-subagents'] && conv.isSubagent) pass = false;
     else if (opts['only-subagents'] && !conv.isSubagent) pass = false;
