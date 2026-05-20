@@ -26,8 +26,8 @@ if (process.argv[2] === 'gui') {
 } else {
 
 const FLAGS = {
-  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format'],
-  multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
+  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
+  multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
   bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
@@ -81,6 +81,9 @@ FILTERS (repeatable flags combine as OR within a flag, AND across flags)
   --type <t>             text|tool_use|tool_result|thinking|system|result; repeat = OR
   --tool <name>          tool name (Read, Bash, ...); repeat = OR
   --session <sid>        session id prefix; repeat = OR  (alias: --sid)
+  --exclude-sess <sid>   exclude session id prefix; repeat = exclude any (alias: --exclude-sid)
+  --exclude-cwd <re>     exclude working-dir regex; repeat = exclude any
+  --exclude-project <n>  exclude basename(cwd) exact match; repeat = exclude any
   --parent <sid>         subagent parent session id
   --no-subagents         exclude subagent sessions
   --only-subagents       only subagent sessions
