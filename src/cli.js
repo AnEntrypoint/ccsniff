@@ -29,7 +29,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -63,6 +63,8 @@ USAGE
   ccsniff --list-projects
   ccsniff --list-tools
   ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
+                                        (excludes subagents by default — --include-subagents to opt in;
+                                         excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
   ccsniff --stats [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
@@ -240,13 +242,20 @@ if (opts['list-projects']) {
 
 // ---------- bash-discipline (flag Bash calls that should have been Read/Glob/Grep/dispatch)
 if (opts['bash-discipline']) {
-  const BAD_LEADING = /^\s*(cat|head|tail|ls|grep|find|sed|awk|echo)\b/;
+  // discipline is about MY tool routing, not subagents — they have separate prompts/contexts.
+  // Default: exclude subagents. --include-subagents opts them back in.
+  const includeSubagents = opts['include-subagents'];
+  const BAD_LEADING = /^\s*(cat|head|tail|ls|grep|find|sed|awk)\b/;
   const SLEEP_POLL = /\bsleep\s+\d+\s*;.*(cat|ls|grep|find|head|tail)/;
+  const SPOOL_WRITE = /\.gm\/exec-spool\/in\//;
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
     if (ev.block?.type !== 'tool_use' || ev.block?.name !== 'Bash') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
     const cmd = ev.block?.input?.command || '';
+    // `echo > .gm/exec-spool/in/<verb>/N.txt` is the canonical spool-write pattern, not a deviation.
+    if (SPOOL_WRITE.test(cmd) && /^\s*echo\b/.test(cmd)) continue;
     const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
     if (!kind) continue;
     violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
@@ -255,12 +264,32 @@ if (opts['bash-discipline']) {
   for (const v of violations) byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1);
   if (opts.stats || opts.count) {
     if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} bash-discipline violations\n`);
+    const subagentNote = includeSubagents ? '' : ' (subagents excluded — pass --include-subagents to include)';
+    process.stdout.write(`# ${violations.length} bash-discipline violations${subagentNote}\n`);
     for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
     const byProj = new Map();
     for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
     process.stdout.write(`# by project\n`);
     for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    const byDay = new Map();
+    for (const v of violations) {
+      const day = new Date(v.ts).toISOString().slice(0, 10);
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    }
+    if (byDay.size > 1) {
+      process.stdout.write(`# by day\n`);
+      for (const [d, c] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) process.stdout.write(`  ${String(c).padStart(6)}  ${d}\n`);
+    }
+    const byHour = new Map();
+    for (const v of violations) {
+      const hour = new Date(v.ts).toISOString().slice(0, 13);
+      byHour.set(hour, (byHour.get(hour) || 0) + 1);
+    }
+    if (byHour.size > 1) {
+      process.stdout.write(`# by hour (last 12)\n`);
+      const sorted = [...byHour.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-12);
+      for (const [h, c] of sorted) process.stdout.write(`  ${String(c).padStart(6)}  ${h}:00\n`);
+    }
     process.exit(0);
   }
   for (const v of violations) {
