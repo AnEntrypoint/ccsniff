@@ -29,7 +29,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -63,6 +63,7 @@ USAGE
   ccsniff --list-projects
   ccsniff --list-tools
   ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
+  ccsniff --git-discipline [--stats]    git push from a dirty/unwitnessed tree
                                         (excludes subagents by default — --include-subagents to opt in;
                                          excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
   ccsniff --stats [filters]
@@ -306,6 +307,48 @@ if (opts['bash-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(15)} [${v.project}]  ${v.cmd}\n`);
   }
   process.stderr.write(`# ${violations.length} violations (${[...byKind.entries()].map(([k, c]) => `${k}:${c}`).join(' ')})\n`);
+  process.exit(0);
+}
+
+if (opts['git-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  const PUSH = /\bgit\s+push\b/;
+  const PORCELAIN_CLEAN = /\bgit\s+status\s+(--porcelain|-s)\b/;
+  const bySid = new Map();
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use' || ev.block?.name !== 'Bash') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const sid = ev.conversation.id;
+    if (!bySid.has(sid)) bySid.set(sid, []);
+    bySid.get(sid).push(ev);
+  }
+  const violations = [];
+  for (const [sid, evs] of bySid) {
+    evs.sort((a, b) => a.timestamp - b.timestamp);
+    for (let i = 0; i < evs.length; i++) {
+      const ev = evs[i];
+      const cmd = ev.block?.input?.command || '';
+      if (!PUSH.test(cmd)) continue;
+      const lookback = evs.slice(Math.max(0, i - 20), i);
+      const witnessed = lookback.some(e => PORCELAIN_CLEAN.test(e.block?.input?.command || ''));
+      if (witnessed) continue;
+      violations.push({ ts: ev.timestamp, sid, project: path.basename(ev.conversation.cwd || ''), kind: 'push-no-porcelain-witness', cmd: cmd.slice(0, 200) });
+    }
+  }
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} git-discipline violations\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  ${v.cmd}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations (push-no-porcelain-witness)\n`);
   process.exit(0);
 }
 
