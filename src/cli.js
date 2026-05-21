@@ -4,6 +4,7 @@ import { toUnslothMessages, toShareGPT } from './unsloth.js';
 import { parseTime, compileRegexes, buildFilter } from './filters.js';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 if (process.argv[2] === 'gui') {
   const { createServer } = await import('./gui-server.js');
@@ -26,10 +27,10 @@ if (process.argv[2] === 'gui') {
 } else {
 
 const FLAGS = {
-  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
+  string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
-  number: ['limit', 'head', 'tail-n', 'ctx', 'truncate'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -63,6 +64,7 @@ USAGE
   ccsniff --list-projects
   ccsniff --list-tools
   ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
+  ccsniff --learning-xref [--sess <id>] [--days N]   join transcript turns to rs-learn recall/memorize
   ccsniff --git-discipline [--stats]    git push from a dirty/unwitnessed tree
                                         (excludes subagents by default — --include-subagents to opt in;
                                          excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
@@ -349,6 +351,85 @@ if (opts['git-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  ${v.cmd}\n`);
   }
   process.stderr.write(`# ${violations.length} violations (push-no-porcelain-witness)\n`);
+  process.exit(0);
+}
+
+// ---------- learning-xref (join transcript turns to gm-log rs_learn signals)
+if (opts['learning-xref']) {
+  const days = opts.days || 1;
+  const wantSess = opts.sess || null;
+  const bySid = new Map();
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (wantSess && !ev.conversation?.id?.startsWith(wantSess)) continue;
+    const sid = ev.conversation?.id;
+    if (!sid) continue;
+    if (!bySid.has(sid)) bySid.set(sid, { cwd: ev.conversation.cwd, evs: [] });
+    bySid.get(sid).evs.push(ev);
+  }
+  const dates = [];
+  const now = Date.now();
+  for (let i = 0; i < days; i++) {
+    dates.push(new Date(now - i * 86400000).toISOString().slice(0, 10));
+  }
+  const gmLogDir = path.join(os.homedir(), '.claude', 'gm-log');
+  const rsLearn = [], bootstrap = [];
+  for (const d of dates) {
+    for (const [file, sink] of [['rs_learn.jsonl', rsLearn], ['bootstrap.jsonl', bootstrap]]) {
+      const fp = path.join(gmLogDir, d, file);
+      if (!fs.existsSync(fp)) continue;
+      const lines = fs.readFileSync(fp, 'utf8').split('\n');
+      for (const ln of lines) {
+        if (!ln.trim()) continue;
+        try {
+          const j = JSON.parse(ln);
+          const ts = typeof j.ts === 'number' ? j.ts : Date.parse(j.ts);
+          if (Number.isFinite(ts)) { j._ts = ts; sink.push(j); }
+        } catch {}
+      }
+    }
+  }
+  rsLearn.sort((a, b) => a._ts - b._ts);
+  let totals = { turns: 0, tool_uses: 0, memorize: 0, recall: 0, hit: 0, miss: 0, embed_fail: 0 };
+  let anyMatched = 0;
+  for (const [sid, info] of bySid) {
+    info.evs.sort((a, b) => a.timestamp - b.timestamp);
+    const project = path.basename(info.cwd || '');
+    const skillTs = info.evs
+      .filter(e => e.block?.type === 'tool_use' && e.block?.name === 'Skill' && e.block?.input?.skill === 'gm-skill')
+      .map(e => e.timestamp);
+    if (!skillTs.length) continue;
+    const sessFirst = info.evs[0].timestamp;
+    const sessLast = info.evs[info.evs.length - 1].timestamp;
+    const bounds = [...skillTs, sessLast + 1];
+    process.stdout.write(`# session ${sid.slice(0, 8)} [${project}] turns=${skillTs.length}\n`);
+    for (let i = 0; i < skillTs.length; i++) {
+      const winStart = bounds[i];
+      const winEnd = bounds[i + 1];
+      const toolUses = info.evs.filter(e => e.timestamp >= winStart && e.timestamp < winEnd && e.block?.type === 'tool_use').length;
+      const rsInWin = rsLearn.filter(j => j._ts >= winStart && j._ts < winEnd && (!j.project || j.project === project) && (!wantSess || !j.sess || j.sess === sid || sid.startsWith(j.sess)));
+      let memorize = 0, recall = 0, hit = 0, miss = 0, embed_fail = 0;
+      for (const j of rsInWin) {
+        if (j.event === 'memorize') memorize++;
+        else if (j.event === 'recall') { recall++; if (j.hit) hit++; else miss++; }
+        else if (j.event === 'embed_fail' || /embed.*fail/i.test(j.event || '')) embed_fail++;
+      }
+      anyMatched += rsInWin.length;
+      totals.turns++;
+      totals.tool_uses += toolUses;
+      totals.memorize += memorize;
+      totals.recall += recall;
+      totals.hit += hit;
+      totals.miss += miss;
+      totals.embed_fail += embed_fail;
+      const ts = new Date(winStart).toISOString().slice(0, 19).replace('T', ' ');
+      process.stdout.write(`${ts} | tool_uses=${toolUses} | memorize=${memorize} | recall=${recall} (hit=${hit} miss=${miss}) | embed_fail=${embed_fail}\n`);
+    }
+  }
+  if (anyMatched === 0 && wantSess) {
+    process.stdout.write(`# no rs-learn events for sess ${wantSess} — confirm bootstrap fires gm-log writes\n`);
+  }
+  process.stderr.write(`# totals: sessions=${bySid.size} turns=${totals.turns} tool_uses=${totals.tool_uses} memorize=${totals.memorize} recall=${totals.recall} (hit=${totals.hit} miss=${totals.miss}) embed_fail=${totals.embed_fail} (scanned ${dates.length}d, rs_learn=${rsLearn.length} bootstrap=${bootstrap.length})\n`);
   process.exit(0);
 }
 
