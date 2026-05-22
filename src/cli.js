@@ -259,6 +259,10 @@ if (opts['bash-discipline']) {
   // and Monitor docs). Same for `while !curl ...; do sleep N; done`. These are
   // NOT sleep-poll violations even though they contain `sleep N`.
   const ENDORSED_POLL = /^\s*(until|while)\s+/;
+  // gm-skill SKILL.md prescribes the boot probe `cat .gm/exec-spool/.status.json; date +%s%3N`
+  // to compare watcher heartbeat against current epoch. The cat is canonical, not a deviation.
+  // Same for reading .watcher.log diagnostics directly.
+  const CANONICAL_BOOT_PROBE = /\.gm\/exec-spool\/\.(status\.json|watcher\.log|bootstrap-(status|error)\.json|last-session-start\.json)/;
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -269,6 +273,8 @@ if (opts['bash-discipline']) {
     if (SPOOL_WRITE.test(cmd) && /^\s*echo\b/.test(cmd)) continue;
     // `until ...; do sleep N; done` is the harness-endorsed poll pattern.
     if (ENDORSED_POLL.test(cmd)) continue;
+    // Canonical gm-skill boot/diagnostic probes (cat .status.json; date +%s%3N etc.) are prescribed by SKILL.md.
+    if (CANONICAL_BOOT_PROBE.test(cmd)) continue;
     const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
     if (!kind) continue;
     violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
