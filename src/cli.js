@@ -316,6 +316,7 @@ if (opts['git-discipline']) {
   const includeSubagents = opts['include-subagents'];
   const PUSH = /\bgit\s+push\b/;
   const PORCELAIN_CLEAN = /\bgit\s+status\s+(--porcelain|-s)\b/;
+  const stripQuoted = (s) => s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
   const bySid = new Map();
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -331,9 +332,10 @@ if (opts['git-discipline']) {
     for (let i = 0; i < evs.length; i++) {
       const ev = evs[i];
       const cmd = ev.block?.input?.command || '';
-      if (!PUSH.test(cmd)) continue;
+      const cmdStripped = stripQuoted(cmd);
+      if (!PUSH.test(cmdStripped)) continue;
       const lookback = evs.slice(Math.max(0, i - 20), i);
-      const witnessed = lookback.some(e => PORCELAIN_CLEAN.test(e.block?.input?.command || ''));
+      const witnessed = lookback.some(e => PORCELAIN_CLEAN.test(stripQuoted(e.block?.input?.command || '')));
       if (witnessed) continue;
       violations.push({ ts: ev.timestamp, sid, project: path.basename(ev.conversation.cwd || ''), kind: 'push-no-porcelain-witness', cmd: cmd.slice(0, 200) });
     }
