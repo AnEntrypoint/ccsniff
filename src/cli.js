@@ -263,6 +263,11 @@ if (opts['bash-discipline']) {
   // to compare watcher heartbeat against current epoch. The cat is canonical, not a deviation.
   // Same for reading .watcher.log diagnostics directly.
   const CANONICAL_BOOT_PROBE = /\.gm\/exec-spool\/\.(status\.json|watcher\.log|bootstrap-(status|error)\.json|last-session-start\.json)/;
+  // Observability surfaces — multi-file pattern scans over JSONL logs and transcript dirs
+  // legitimately need grep/tail/cat because Read tool can't stream multi-file or pipe to head -c.
+  // gm-log/<day>/*.jsonl, .claude/projects/*/*.jsonl, and *.jsonl in general are the canonical
+  // observability targets per AGENTS.md "rs-learn observability" entry.
+  const OBSERVABILITY_TARGET = /\.(jsonl|ndjson|log)\b|gm-log\/|\.claude\/projects\//;
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -275,6 +280,8 @@ if (opts['bash-discipline']) {
     if (ENDORSED_POLL.test(cmd)) continue;
     // Canonical gm-skill boot/diagnostic probes (cat .status.json; date +%s%3N etc.) are prescribed by SKILL.md.
     if (CANONICAL_BOOT_PROBE.test(cmd)) continue;
+    // Observability surface reads — grep/cat/tail over JSONL logs and transcript dirs are legit (Read tool can't stream/multi-file).
+    if (OBSERVABILITY_TARGET.test(cmd)) continue;
     const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
     if (!kind) continue;
     violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
