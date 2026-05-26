@@ -124,17 +124,19 @@ export class JsonlWatcher extends EventEmitter {
     this.emit('streaming_complete', { conversationId: conv.id, conversation: conv, seq: this._seq(sid), timestamp: Date.now() });
   }
 
-  _push(conv, sid, block, role) {
-    this.emit('streaming_progress', { conversationId: conv.id, conversation: conv, block, role, seq: this._seq(sid), timestamp: Date.now() });
+  _push(conv, sid, block, role, eventTs) {
+    const ts = eventTs != null ? eventTs : Date.now();
+    this.emit('streaming_progress', { conversationId: conv.id, conversation: conv, block, role, seq: this._seq(sid), timestamp: ts });
   }
 
   _route(conv, sid, e) {
     if (e.type === 'queue-operation' || e.type === 'last-prompt') return;
+    const ets = e.timestamp ? Date.parse(e.timestamp) : null;
     if (e.type === 'user' && e.isMeta) {
       this._startStreaming(conv, sid);
       const content = e.message?.content;
       const text = typeof content === 'string' ? content : (Array.isArray(content) ? content.filter(b => b?.type === 'text').map(b => b.text).join('') : '');
-      if (text.trim()) this._push(conv, sid, { type: 'text', text, isMeta: true }, 'user');
+      if (text.trim()) this._push(conv, sid, { type: 'text', text, isMeta: true }, 'user', ets);
       return;
     }
 
@@ -147,7 +149,7 @@ export class JsonlWatcher extends EventEmitter {
       if (e.subtype === 'init') { this._startStreaming(conv, sid); return; }
       if (e.subtype === 'turn_duration' || e.subtype === 'stop_hook_summary') { this._endStreaming(conv, sid); return; }
       this._startStreaming(conv, sid);
-      this._push(conv, sid, { type: 'system', subtype: e.subtype, model: e.model, cwd: e.cwd, tools: e.tools }, 'system');
+      this._push(conv, sid, { type: 'system', subtype: e.subtype, model: e.model, cwd: e.cwd, tools: e.tools }, 'system', ets);
       return;
     }
 
@@ -158,7 +160,7 @@ export class JsonlWatcher extends EventEmitter {
       const newBlocks = e.message.content.slice(prev);
       if (newBlocks.length > 0) {
         this._emitted.set(key, e.message.content.length);
-        for (const b of newBlocks) if (b?.type) this._push(conv, sid, b, 'assistant');
+        for (const b of newBlocks) if (b?.type) this._push(conv, sid, b, 'assistant', ets);
       }
       if (e.message.stop_reason) this._emitted.delete(key);
       return;
@@ -168,19 +170,19 @@ export class JsonlWatcher extends EventEmitter {
       this._startStreaming(conv, sid);
       const content = e.message.content;
       if (typeof content === 'string') {
-        if (content.trim()) this._push(conv, sid, { type: 'text', text: content }, 'user');
+        if (content.trim()) this._push(conv, sid, { type: 'text', text: content }, 'user', ets);
       } else if (Array.isArray(content)) {
         for (const b of content) {
           if (!b || !b.type) continue;
-          if (b.type === 'tool_result') this._push(conv, sid, b, 'tool_result');
-          else this._push(conv, sid, b, 'user');
+          if (b.type === 'tool_result') this._push(conv, sid, b, 'tool_result', ets);
+          else this._push(conv, sid, b, 'user', ets);
         }
       }
       return;
     }
 
     if (e.type === 'result') {
-      this._push(conv, sid, { type: 'result', result: e.result, subtype: e.subtype, duration_ms: e.duration_ms, total_cost_usd: e.total_cost_usd, is_error: e.is_error || false }, 'result');
+      this._push(conv, sid, { type: 'result', result: e.result, subtype: e.subtype, duration_ms: e.duration_ms, total_cost_usd: e.total_cost_usd, is_error: e.is_error || false }, 'result', ets);
       this._endStreaming(conv, sid);
     }
   }
