@@ -30,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -66,6 +66,7 @@ USAGE
   ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
   ccsniff --learning-xref [--sess <id>] [--days N]   join transcript turns to rs-learn recall/memorize
   ccsniff --git-discipline [--stats]    git push from a dirty/unwitnessed tree
+  ccsniff --search-discipline [--stats] native search (Grep/Glob/Explore/find) instead of codesearch/recall
                                         (excludes subagents by default — --include-subagents to opt in;
                                          excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
   ccsniff --stats [filters]
@@ -366,6 +367,62 @@ if (opts['git-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  ${v.cmd}\n`);
   }
   process.stderr.write(`# ${violations.length} violations (push-no-porcelain-witness)\n`);
+  process.exit(0);
+}
+
+// ---------- search-discipline (flag native search that should have been codesearch/recall)
+// A native-search bypass (Grep/Glob, the Explore/Task search subagent, or bash grep/rg/find/ag)
+// emits NO plugkit deviation because it never touches the spool — it is invisible to gmsniff and
+// the watcher ledger. ccsniff reads the tool-call stream directly, so it is the only surface that
+// can catch the SKILL.md class-rule violation: code/file/symbol search routes through codesearch,
+// prior-knowledge through recall, never a host-native search tool.
+if (opts['search-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  const BASH_SEARCH = /(^|[|&;]|\s)(rg|grep|find|ag|ack|fd|fgrep|egrep)\s/;
+  const violations = [];
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const name = ev.block?.name || '';
+    const project = path.basename(ev.conversation?.cwd || '');
+    const ts = ev.timestamp, sid = ev.conversation?.id || '';
+    let kind = null, detail = '';
+    if (name === 'Grep' || name === 'Glob') {
+      kind = `native-search-${name.toLowerCase()}`;
+      detail = (ev.block?.input?.pattern || ev.block?.input?.query || '').slice(0, 120);
+    } else if (name === 'Task' || name === 'Agent') {
+      const sub = (ev.block?.input?.subagent_type || ev.block?.input?.description || '').toLowerCase();
+      if (/explore|search|general-purpose/.test(sub)) {
+        kind = 'native-search-subagent';
+        detail = sub.slice(0, 120);
+      }
+    } else if (name === 'Bash') {
+      const cmd = ev.block?.input?.command || '';
+      if (BASH_SEARCH.test(cmd)) {
+        kind = 'native-search-bash';
+        // show the line that actually invokes the search tool, not line 1 (often a cd)
+        const hit = cmd.split('\n').find(l => BASH_SEARCH.test(l)) || cmd;
+        detail = hit.trim().slice(0, 120);
+      }
+    }
+    if (kind) violations.push({ ts, sid, project, kind, detail });
+  }
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} search-discipline violations (native search instead of codesearch/recall)\n`);
+    const byKind = new Map(), byProj = new Map();
+    for (const v of violations) { byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1); byProj.set(v.project, (byProj.get(v.project) || 0) + 1); }
+    process.stdout.write(`# by kind\n`);
+    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(24)} [${v.project}]  ${v.detail}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations — use codesearch (code/file/symbol) or recall (prior knowledge) instead\n`);
   process.exit(0);
 }
 
