@@ -380,6 +380,9 @@ if (opts['git-discipline']) {
 if (opts['search-discipline']) {
   const includeSubagents = opts['include-subagents'];
   const BASH_SEARCH = /(^|[|&;]|\s)(rg|grep|find|ag|ack|fd|fgrep|egrep)\s/;
+  // A search-tool token inside a quoted string (echo/printf/node -e payloads) is text, not a shell
+  // invocation; blank quoted bodies before matching, like git-discipline strips commit-message bodies.
+  const stripQuoted = (s) => s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -404,7 +407,7 @@ if (opts['search-discipline']) {
       // not searching the codebase tree — codesearch has no equivalent for that and it is not the
       // bypass the rule targets. Flag only a search tool that STARTS a pipeline segment (reads the
       // tree directly), never one immediately downstream of a pipe.
-      const isTreeSearchLine = (line) => BASH_SEARCH.test(line.split('|')[0]);
+      const isTreeSearchLine = (line) => BASH_SEARCH.test(stripQuoted(line).split('|')[0]);
       const hitLine = cmd.split('\n').find(isTreeSearchLine);
       if (hitLine) {
         kind = 'native-search-bash';
