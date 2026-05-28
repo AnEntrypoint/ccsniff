@@ -383,6 +383,23 @@ if (opts['search-discipline']) {
   // A search-tool token inside a quoted string (echo/printf/node -e payloads) is text, not a shell
   // invocation; blank quoted bodies before matching, like git-discipline strips commit-message bodies.
   const stripQuoted = (s) => s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
+  // codesearch indexes ONLY the conversation's own cwd (the gm repo). A search whose target is a
+  // sibling repo outside cwd has NO codesearch index to route through, so the agent is forced to
+  // native search and flagging it is a false positive. Exempt a line that targets an absolute path
+  // or cd's into a directory that is not under the conversation cwd.
+  const normPath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const targetsOutsideCwd = (line, cwd) => {
+    const cwdN = normPath(cwd);
+    if (!cwdN) return false;
+    const stripped = stripQuoted(line);
+    // explicit `cd <dir>` to a path outside cwd
+    const cdM = stripped.match(/(?:^|[|&;]\s*)cd\s+([^\s|&;]+)/i);
+    if (cdM) { const d = normPath(cdM[1]); if (d.startsWith('/') || /^[a-z]:/.test(d)) { if (!d.startsWith(cwdN)) return true; } }
+    // absolute path argument to the search tool that is outside cwd
+    const absArgs = stripped.match(/(?:^|\s)((?:[a-z]:)?\/[^\s|&;"']+)/gi) || [];
+    for (const a of absArgs) { const d = normPath(a.trim()); if ((d.startsWith('/') || /^[a-z]:/.test(d)) && !d.startsWith(cwdN)) return true; }
+    return false;
+  };
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -393,8 +410,14 @@ if (opts['search-discipline']) {
     const ts = ev.timestamp, sid = ev.conversation?.id || '';
     let kind = null, detail = '';
     if (name === 'Grep' || name === 'Glob') {
-      kind = `native-search-${name.toLowerCase()}`;
-      detail = (ev.block?.input?.pattern || ev.block?.input?.query || '').slice(0, 120);
+      // A Grep/Glob whose path points outside the cwd targets a sibling repo with no codesearch
+      // index — exempt it, same as a cross-repo bash search.
+      const gp = ev.block?.input?.path;
+      if (gp && targetsOutsideCwd(gp, ev.conversation?.cwd)) { /* cross-repo, exempt */ }
+      else {
+        kind = `native-search-${name.toLowerCase()}`;
+        detail = (ev.block?.input?.pattern || ev.block?.input?.query || '').slice(0, 120);
+      }
     } else if (name === 'Task' || name === 'Agent') {
       const sub = (ev.block?.input?.subagent_type || ev.block?.input?.description || '').toLowerCase();
       if (/explore|search|general-purpose/.test(sub)) {
@@ -409,7 +432,9 @@ if (opts['search-discipline']) {
       // tree directly), never one immediately downstream of a pipe.
       const isTreeSearchLine = (line) => BASH_SEARCH.test(stripQuoted(line).split('|')[0]);
       const hitLine = cmd.split('\n').find(isTreeSearchLine);
-      if (hitLine) {
+      // Exempt a tree-search line that targets a sibling repo outside cwd (no codesearch index exists
+      // for it). Each command may `cd` first, so evaluate the cd context on the same line.
+      if (hitLine && !targetsOutsideCwd(hitLine, ev.conversation?.cwd)) {
         kind = 'native-search-bash';
         detail = (hitLine.split('|')[0]).trim().slice(0, 120);
       }
