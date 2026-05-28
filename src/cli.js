@@ -436,6 +436,9 @@ if (opts['glyph-discipline']) {
   const includeSubagents = opts['include-subagents'];
   const GLYPH = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/u;
   const GLYPH_G = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/gu;
+  // Glyphs inside a regex char-class (e.g. /[←-⇿]/) are a detector/range DEFINITION, not decorative
+  // prose — blank those bracket bodies before testing so a glyph-rule definition does not flag itself.
+  const stripGlyphCharClass = (s) => s.replace(/\[[^\]\n]*\]/g, (m) => GLYPH.test(m) ? '[]' : m);
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -445,7 +448,8 @@ if (opts['glyph-discipline']) {
     if (name !== 'Write' && name !== 'Edit' && name !== 'NotebookEdit') continue;
     const inp = ev.block?.input || {};
     const filePath = inp.file_path || inp.notebook_path || '';
-    const content = [inp.content, inp.new_string, inp.new_source].filter(s => typeof s === 'string').join('\n');
+    const rawContent = [inp.content, inp.new_string, inp.new_source].filter(s => typeof s === 'string').join('\n');
+    const content = stripGlyphCharClass(rawContent);
     if (!content || !GLYPH.test(content)) continue;
     const glyphs = [...new Set((content.match(GLYPH_G) || []))].slice(0, 10).join(' ');
     violations.push({ ts: ev.timestamp, sid: ev.conversation?.id || '', project: path.basename(ev.conversation?.cwd || ''), kind: 'glyph-written', file: path.basename(filePath), glyphs });
