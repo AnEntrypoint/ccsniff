@@ -30,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -67,6 +67,7 @@ USAGE
   ccsniff --learning-xref [--sess <id>] [--days N]   join transcript turns to rs-learn recall/memorize
   ccsniff --git-discipline [--stats]    git push from a dirty/unwitnessed tree
   ccsniff --search-discipline [--stats] native search (Grep/Glob/Explore/find) instead of codesearch/recall
+  ccsniff --glyph-discipline [--stats]  decorative glyphs (arrows/box/star/dot/check/emoji) written into files
                                         (excludes subagents by default — --include-subagents to opt in;
                                          excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
   ccsniff --stats [filters]
@@ -423,6 +424,45 @@ if (opts['search-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(24)} [${v.project}]  ${v.detail}\n`);
   }
   process.stderr.write(`# ${violations.length} violations — use codesearch (code/file/symbol) or recall (prior knowledge) instead\n`);
+  process.exit(0);
+}
+
+// ---------- glyph-discipline (flag decorative graphical symbols written into files)
+// The gm SKILL.md rule forbids decorative glyphs (arrows, box/geometric glyphs, stars, dots,
+// bullets, checkmarks, crosses, emojis) in output and source; they must convert to ASCII on sight.
+// A glyph written into a file via Write/Edit is invisible to the spool ledger, so ccsniff reading
+// the tool-call stream is the surface that catches it. Functional operators are ASCII and never match.
+if (opts['glyph-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  const GLYPH = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/u;
+  const GLYPH_G = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/gu;
+  const violations = [];
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const name = ev.block?.name || '';
+    if (name !== 'Write' && name !== 'Edit' && name !== 'NotebookEdit') continue;
+    const inp = ev.block?.input || {};
+    const filePath = inp.file_path || inp.notebook_path || '';
+    const content = [inp.content, inp.new_string, inp.new_source].filter(s => typeof s === 'string').join('\n');
+    if (!content || !GLYPH.test(content)) continue;
+    const glyphs = [...new Set((content.match(GLYPH_G) || []))].slice(0, 10).join(' ');
+    violations.push({ ts: ev.timestamp, sid: ev.conversation?.id || '', project: path.basename(ev.conversation?.cwd || ''), kind: 'glyph-written', file: path.basename(filePath), glyphs });
+  }
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} glyph-discipline violations (decorative glyphs written to files)\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(14)} [${v.project}]  ${v.file}  ${v.glyphs}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations — convert decorative glyphs to ASCII (-> for arrow, - or * for bullet, [x]/[ ] for check/cross)\n`);
   process.exit(0);
 }
 
