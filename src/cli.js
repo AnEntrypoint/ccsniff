@@ -400,11 +400,15 @@ if (opts['search-discipline']) {
       }
     } else if (name === 'Bash') {
       const cmd = ev.block?.input?.command || '';
-      if (BASH_SEARCH.test(cmd)) {
+      // A search tool fed by a pipe (`<cmd> | grep ...`) is filtering another command's stdout,
+      // not searching the codebase tree — codesearch has no equivalent for that and it is not the
+      // bypass the rule targets. Flag only a search tool that STARTS a pipeline segment (reads the
+      // tree directly), never one immediately downstream of a pipe.
+      const isTreeSearchLine = (line) => BASH_SEARCH.test(line.split('|')[0]);
+      const hitLine = cmd.split('\n').find(isTreeSearchLine);
+      if (hitLine) {
         kind = 'native-search-bash';
-        // show the line that actually invokes the search tool, not line 1 (often a cd)
-        const hit = cmd.split('\n').find(l => BASH_SEARCH.test(l)) || cmd;
-        detail = hit.trim().slice(0, 120);
+        detail = (hitLine.split('|')[0]).trim().slice(0, 120);
       }
     }
     if (kind) violations.push({ ts, sid, project, kind, detail });
