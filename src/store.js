@@ -97,8 +97,16 @@ export class Store {
       if (this.events.length > softCap) this.events.splice(0, this.events.length - this.maxEvents);
     });
     r.on('streaming_error', ev => { this.errors.push({ ts: ev.timestamp, sid: ev.conversationId, error: ev.error, recoverable: ev.recoverable }); });
-    const stats = r.replay({});
+    // Bound the replay to a little above the retention cap and read newest-first,
+    // so a large projects tree never parses its entire backlog into the heap at
+    // once. The post-replay trim then lands exactly on maxEvents.
+    const stats = r.replay({ maxEvents: Math.floor(this.maxEvents * 1.2) });
     this.fileCount = stats.files;
+    // Newest-first file read can leave events out of chronological order; restore
+    // it (downstream sessions/search/snippet logic assumes ascending ts) and
+    // renumber the positional index the BM25 index keys on.
+    this.events.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    this.events.forEach((e, k) => { e.i = k; });
     this.trimEvents();
     this.rebuildIndex();
     return stats;
