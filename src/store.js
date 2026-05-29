@@ -7,13 +7,20 @@ import { buildIndex, search, snippet, tokenize } from './bm25.js';
 export const DEFAULT_PROJECTS_DIR =
   process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 
+// Per-event retained-text ceiling. Tool outputs (file reads, command stdout) can
+// be many KB each; held in full across tens of thousands of events they dominate
+// the in-memory footprint. A generous cap preserves search tokens and snippet
+// windows while bounding the heap. Override via CCSNIFF_MAX_TEXT.
+const MAX_TEXT = parseInt(process.env.CCSNIFF_MAX_TEXT || '', 10) || 8192;
+
 export function blockText(b) {
   if (!b) return '';
-  if (typeof b.text === 'string') return b.text;
-  if (typeof b.content === 'string') return b.content;
-  if (Array.isArray(b.content)) return b.content.map(c => c?.text || '').join('');
-  if (b.input) { try { return JSON.stringify(b.input); } catch { return ''; } }
-  return '';
+  let t = '';
+  if (typeof b.text === 'string') t = b.text;
+  else if (typeof b.content === 'string') t = b.content;
+  else if (Array.isArray(b.content)) t = b.content.map(c => c?.text || '').join('');
+  else if (b.input) { try { t = JSON.stringify(b.input); } catch { t = ''; } }
+  return t.length > MAX_TEXT ? t.slice(0, MAX_TEXT) : t;
 }
 
 export function flattenEvent(ev, idx) {
@@ -40,8 +47,16 @@ export function flattenEvent(ev, idx) {
   };
 }
 
+// Cap retained in-memory events so a long-lived server watching an active
+// ~/.claude/projects tree does not grow without bound. The live watcher appends
+// every new event for the life of the process; without a ceiling the heap climbs
+// until OOM. Oldest events are evicted in batches (front-splice is O(n), so we
+// drop a slab at once and rebuild the search index lazily on next search).
+const DEFAULT_MAX_EVENTS = parseInt(process.env.CCSNIFF_MAX_EVENTS || '', 10) || 15000;
+const EVICT_BATCH_FRACTION = 0.1;
+
 export class Store {
-  constructor(projectsDir) {
+  constructor(projectsDir, { maxEvents } = {}) {
     this.projectsDir = projectsDir || DEFAULT_PROJECTS_DIR;
     this.events = [];
     this.errors = [];
@@ -52,16 +67,39 @@ export class Store {
     this.watcher = null;
     this.sseClients = new Set();
     this.convs = new Map();
+    this.maxEvents = maxEvents || DEFAULT_MAX_EVENTS;
+  }
+
+  // Drop oldest events once the cap is exceeded. Evicting shifts array indices,
+  // so the BM25 index (which maps by position) is invalidated and rebuilt lazily.
+  trimEvents() {
+    if (this.events.length > this.maxEvents) {
+      const drop = Math.max(this.events.length - this.maxEvents, Math.floor(this.maxEvents * EVICT_BATCH_FRACTION));
+      this.events.splice(0, drop);
+      this.index = null;
+    }
+    // errors are capped independently of events (a burst of errors must not be
+    // gated behind the events ceiling).
+    if (this.errors.length > this.maxEvents) this.errors.splice(0, this.errors.length - this.maxEvents);
   }
 
   loadOnce() {
     const r = new JsonlReplayer(this.projectsDir);
     let i = 0;
     r.on('conversation_created', ev => this.convs.set(ev.conversation.id, ev.conversation));
-    r.on('streaming_progress', ev => { this.events.push(flattenEvent(ev, i++)); });
+    // Trim during replay (not only after) so the full backlog never materializes
+    // at once — that one-shot peak, not steady-state, is what spikes RSS on a
+    // large ~/.claude/projects tree. A soft headroom above maxEvents keeps the
+    // trim from running on every push.
+    const softCap = Math.floor(this.maxEvents * 1.25);
+    r.on('streaming_progress', ev => {
+      this.events.push(flattenEvent(ev, i++));
+      if (this.events.length > softCap) this.events.splice(0, this.events.length - this.maxEvents);
+    });
     r.on('streaming_error', ev => { this.errors.push({ ts: ev.timestamp, sid: ev.conversationId, error: ev.error, recoverable: ev.recoverable }); });
     const stats = r.replay({});
     this.fileCount = stats.files;
+    this.trimEvents();
     this.rebuildIndex();
     return stats;
   }
@@ -82,6 +120,7 @@ export class Store {
       const fl = flattenEvent(ev, this.events.length);
       this.events.push(fl);
       this.broadcast('event', { sid: fl.sid, payload: fl });
+      this.trimEvents();
     });
     this.watcher.on('streaming_error', ev => {
       const e = { ts: ev.timestamp, sid: ev.conversationId, error: ev.error, recoverable: ev.recoverable };
