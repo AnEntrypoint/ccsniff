@@ -195,7 +195,7 @@ export function watch(projectsDir) {
 export class JsonlReplayer extends JsonlWatcher {
   constructor(projectsDir = DEFAULT_DIR) { super(projectsDir); }
 
-  replay({ since = 0, files: fileFilter = null } = {}) {
+  replay({ since = 0, files: fileFilter = null, maxEvents = 0 } = {}) {
     const all = [];
     const collect = (dir, depth) => {
       if (depth > 5) return;
@@ -208,9 +208,19 @@ export class JsonlReplayer extends JsonlWatcher {
       } catch {}
     };
     if (fs.existsSync(this._dir)) collect(this._dir, 0);
-    const chosen = fileFilter ? all.filter(fileFilter) : all;
+    let chosen = fileFilter ? all.filter(fileFilter) : all;
+    // When a maxEvents budget is set, read newest files first and stop once the
+    // budget is met — so a huge projects tree never has its full backlog parsed
+    // into the heap at once (the load-time memory peak this guards against).
+    if (maxEvents > 0) {
+      chosen = chosen
+        .map(fp => { try { return { fp, m: fs.statSync(fp).mtimeMs }; } catch { return { fp, m: 0 }; } })
+        .sort((a, b) => b.m - a.m)
+        .map(x => x.fp);
+    }
     let emitted = 0;
     for (const fp of chosen) {
+      if (maxEvents > 0 && emitted >= maxEvents) break;
       const fallbackSid = path.basename(fp, '.jsonl');
       let data;
       try { data = fs.readFileSync(fp, 'utf8'); } catch { continue; }
