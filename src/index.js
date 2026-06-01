@@ -160,7 +160,7 @@ export class JsonlWatcher extends EventEmitter {
       const newBlocks = e.message.content.slice(prev);
       if (newBlocks.length > 0) {
         this._emitted.set(key, e.message.content.length);
-        for (const b of newBlocks) if (b?.type) this._push(conv, sid, b, 'assistant', ets);
+        for (const b of newBlocks) if (b?.type) this._push(conv, sid, { ...b, msgId: e.message.id, stopReason: e.message.stop_reason || null }, 'assistant', ets);
       }
       if (e.message.stop_reason) this._emitted.delete(key);
       return;

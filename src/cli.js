@@ -30,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -70,6 +70,9 @@ USAGE
   ccsniff --glyph-discipline [--stats]  decorative glyphs (arrows/box/star/dot/check/emoji) written into files
                                         (excludes subagents by default — --include-subagents to opt in;
                                          excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
+  ccsniff --continuation-discipline [--stats]  assistant turn that ends in prose with no tool call:
+                                        a summary, or deferred intent ("Let me X" / "I'll X" / "Now to")
+                                        as the final sentence — the toolless-turn stop (paper §38)
   ccsniff --stats [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
@@ -499,6 +502,73 @@ if (opts['glyph-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(14)} [${v.project}]  ${v.file}  ${v.glyphs}\n`);
   }
   process.stderr.write(`# ${violations.length} violations — convert decorative glyphs to ASCII (-> for arrow, - or * for bullet, [x]/[ ] for check/cross)\n`);
+  process.exit(0);
+}
+
+// ---------- continuation-discipline (flag the toolless-turn stop: paper §38)
+// An assistant message whose blocks contain NO tool_use, ending in prose, IS the turn ending —
+// the harness reads only tool calls, so the session halts there. Two faces: a backward-facing
+// summary, and deferred intent (a turn-final sentence naming the next move instead of making it,
+// "Let me read X" / "I'll start with Y" / "Now to the core"). The plugkit watchdog catches a
+// permanent stall at runtime; this catches the linguistic signature post-hoc in the transcript,
+// where each block of one assistant message shares a (sid, timestamp) group.
+if (opts['continuation-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  // Match against the LAST sentence of the message, extracted first — the deferred-intent or
+  // summary phrase opens that final clause. Testing the whole multi-paragraph blob with a
+  // start-anchor fails because the trailing sentence rarely begins right after a clean boundary.
+  const lastSentenceOf = (t) => {
+    const s = t.trimEnd();
+    const m = s.match(/[^.!?\n]*[.!?]?\s*$/);
+    let sent = (m ? m[0] : s).trim();
+    if (sent.length < 4) { const m2 = s.match(/[^\n]*$/); sent = (m2 ? m2[0] : s).trim(); }
+    return sent;
+  };
+  const DEFERRED = /^\s*(let me|let's|i'?ll|i will|i'?m going to|i am going to|now to|now,? to|next,? i|next i'?ll|now i'?ll|now i need to|i need to|i should|time to|i'?m about to)\b/i;
+  const SUMMARY = /^\s*(in summary|to summarize|here'?s what i (did|changed)|that'?s (it|done|all)|all done|the work is (now )?(done|complete)|i'?ve (now )?(completed|finished|done))\b/i;
+  // Group by the real per-message id (msgId), not (sid,ts): a text block and its tool_use share
+  // one message. The discriminator for a genuine stop is stop_reason === 'end_turn' — a message
+  // that ends with a tool_use carries stop_reason 'tool_use' and a tool followed, so it is NOT a
+  // stop even if its text says "Let me X". Only an end_turn message ending in text is the harness
+  // halting on prose. Gating on end_turn is what separates the true stop from think-then-act.
+  const byMsg = new Map();
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.role !== 'assistant') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const b = ev.block || {};
+    const key = `${ev.conversation?.id || ''}|${b.msgId || ev.timestamp}`;
+    if (!byMsg.has(key)) byMsg.set(key, { sid: ev.conversation?.id || '', cwd: ev.conversation?.cwd || '', ts: ev.timestamp, hasTool: false, lastText: '', stopReason: null });
+    const m = byMsg.get(key);
+    if (b.stopReason) m.stopReason = b.stopReason;
+    if (b.type === 'tool_use') m.hasTool = true;
+    else if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) m.lastText = b.text;
+  }
+  const violations = [];
+  for (const [, m] of byMsg) {
+    if (m.hasTool) continue;
+    if (m.stopReason !== 'end_turn') continue;
+    if (!m.lastText.trim()) continue;
+    const lastSentence = lastSentenceOf(m.lastText);
+    if (!lastSentence) continue;
+    const kind = DEFERRED.test(lastSentence) ? 'deferred-intent' : (SUMMARY.test(lastSentence) ? 'summary' : null);
+    if (!kind) continue;
+    violations.push({ ts: m.ts, sid: m.sid, project: path.basename(m.cwd || ''), kind, tail: lastSentence.slice(0, 160) });
+  }
+  violations.sort((a, b) => a.ts - b.ts);
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} continuation-discipline violations (toolless-turn stops)\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(15)} [${v.project}]  ${v.tail}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations — a turn ending in prose with no tool call is a stop; take the move instead of announcing it\n`);
   process.exit(0);
 }
 
