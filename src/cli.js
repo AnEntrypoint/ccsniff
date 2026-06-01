@@ -2,6 +2,7 @@
 import { JsonlReplayer, rollup, vault } from './index.js';
 import { toUnslothMessages, toShareGPT } from './unsloth.js';
 import { parseTime, compileRegexes, buildFilter } from './filters.js';
+import { stripQuoted, targetsOutsideCwd, targetsSingleFile } from './discipline-helpers.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -383,26 +384,10 @@ if (opts['git-discipline']) {
 if (opts['search-discipline']) {
   const includeSubagents = opts['include-subagents'];
   const BASH_SEARCH = /(^|[|&;]|\s)(rg|grep|find|ag|ack|fd|fgrep|egrep)\s/;
-  // A search-tool token inside a quoted string (echo/printf/node -e payloads) is text, not a shell
-  // invocation; blank quoted bodies before matching, like git-discipline strips commit-message bodies.
-  const stripQuoted = (s) => s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
-  // codesearch indexes ONLY the conversation's own cwd (the gm repo). A search whose target is a
-  // sibling repo outside cwd has NO codesearch index to route through, so the agent is forced to
-  // native search and flagging it is a false positive. Exempt a line that targets an absolute path
-  // or cd's into a directory that is not under the conversation cwd.
-  const normPath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  const targetsOutsideCwd = (line, cwd) => {
-    const cwdN = normPath(cwd);
-    if (!cwdN) return false;
-    const stripped = stripQuoted(line);
-    // explicit `cd <dir>` to a path outside cwd
-    const cdM = stripped.match(/(?:^|[|&;]\s*)cd\s+([^\s|&;]+)/i);
-    if (cdM) { const d = normPath(cdM[1]); if (d.startsWith('/') || /^[a-z]:/.test(d)) { if (!d.startsWith(cwdN)) return true; } }
-    // absolute path argument to the search tool that is outside cwd
-    const absArgs = stripped.match(/(?:^|\s)((?:[a-z]:)?\/[^\s|&;"']+)/gi) || [];
-    for (const a of absArgs) { const d = normPath(a.trim()); if ((d.startsWith('/') || /^[a-z]:/.test(d)) && !d.startsWith(cwdN)) return true; }
-    return false;
-  };
+  // stripQuoted, targetsOutsideCwd (cwd-override + cross-repo exemption), and targetsSingleFile
+  // (single-file read-filter exemption) live in discipline-helpers.js so they are unit-testable
+  // without running the CLI. codesearch indexes only the conversation cwd, so a cross-repo or
+  // single-file grep has no index to route through and flagging it is a false positive.
   const violations = [];
   for (const ev of all) {
     if (!filter(ev)) continue;
@@ -433,11 +418,13 @@ if (opts['search-discipline']) {
       // not searching the codebase tree — codesearch has no equivalent for that and it is not the
       // bypass the rule targets. Flag only a search tool that STARTS a pipeline segment (reads the
       // tree directly), never one immediately downstream of a pipe.
-      const isTreeSearchLine = (line) => BASH_SEARCH.test(stripQuoted(line).split('|')[0]);
+      // A line whose first non-space token is `#` is a shell comment, not a command — never a search.
+      const isTreeSearchLine = (line) => !/^\s*#/.test(line) && BASH_SEARCH.test(stripQuoted(line).split('|')[0]);
       const hitLine = cmd.split('\n').find(isTreeSearchLine);
       // Exempt a tree-search line that targets a sibling repo outside cwd (no codesearch index exists
-      // for it). Each command may `cd` first, so evaluate the cd context on the same line.
-      if (hitLine && !targetsOutsideCwd(hitLine, ev.conversation?.cwd)) {
+      // for it), or that greps ONE explicit file (a read-filter codesearch cannot serve). Each
+      // command may cd/git -C first, so evaluate the context on the same line.
+      if (hitLine && !targetsOutsideCwd(hitLine, ev.conversation?.cwd) && !targetsSingleFile(hitLine)) {
         kind = 'native-search-bash';
         detail = (hitLine.split('|')[0]).trim().slice(0, 120);
       }
