@@ -6,6 +6,27 @@ import http from 'http';
 import { buildIndex, search, tokenize } from './src/bm25.js';
 import { createServer } from './src/gui-server.js';
 import { toUnslothMessages, toShareGPT } from './src/unsloth.js';
+import { targetsOutsideCwd, targetsSingleFile } from './src/discipline-helpers.js';
+
+function testSearchDisciplineExemptions() {
+  const CWD = 'C:/dev/gm';
+  const cases = [
+    ['git -C sibling exempt', () => targetsOutsideCwd('git -C /c/dev/rs-plugkit grep X', CWD), true],
+    ['cd sibling exempt', () => targetsOutsideCwd('cd /c/dev/ccsniff; grep X', CWD), true],
+    ['pushd sibling exempt', () => targetsOutsideCwd('pushd /c/dev/ccsniff; grep X', CWD), true],
+    ['git -C inside cwd not exempt', () => targetsOutsideCwd('git -C /c/dev/gm/sub grep X', CWD), false],
+    ['msys path form normalized', () => targetsOutsideCwd('grep X /c/dev/rs-learn/src/a.rs', CWD), true],
+    ['single file exempt', () => targetsSingleFile('grep -n writeStatus gm-plugkit/wrapper.js'), true],
+    ['single file with redirect exempt', () => targetsSingleFile("grep -n pat src/entry.rs 2>/dev/null"), true],
+    ['recursive tree not single', () => targetsSingleFile('grep -r X src/'), false],
+    ['glob not single', () => targetsSingleFile('grep X **/*.js'), false],
+    ['dir target not single', () => targetsSingleFile('grep -n X src/'), false],
+    ['no-path not single', () => targetsSingleFile('grep writeStatus'), false],
+    ['in-cwd file flagged via single-exempt-only', () => targetsSingleFile('grep -n writeStatus gm-plugkit/wrapper.js') && !targetsOutsideCwd('grep -n writeStatus gm-plugkit/wrapper.js', CWD), true],
+  ];
+  for (const [desc, fn, want] of cases) assert.equal(fn(), want, `search-discipline exemption: ${desc}`);
+  console.log(`ok search-discipline exemptions (${cases.length} cases)`);
+}
 
 function get(url) {
   return new Promise((res, rej) => {
@@ -32,6 +53,7 @@ function makeFixture() {
 }
 
 async function main() {
+  testSearchDisciplineExemptions();
   // BM25 unit
   const docs = ['the quick brown foobar jumps', 'lorem ipsum dolor sit', 'foobar foobar foobar wins'];
   const idx = buildIndex(docs, d => d);
