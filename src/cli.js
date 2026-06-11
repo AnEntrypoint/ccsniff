@@ -31,7 +31,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline', 'verb-bypass-discipline', 'spool-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -74,6 +74,11 @@ USAGE
   ccsniff --continuation-discipline [--stats]  assistant turn that ends in prose with no tool call:
                                         a summary, or deferred intent ("Let me X" / "I'll X" / "Now to")
                                         as the final sentence — the toolless-turn stop (paper §38)
+  ccsniff --verb-bypass-discipline [--stats]   a platform-native tool used where a plugkit verb exists:
+                                        WebFetch/WebSearch->fetch, Task-search->codesearch,
+                                        raw puppeteer/chrome->browser, platform-memory Write->memorize-fire
+  ccsniff --spool-discipline [--stats]  a spool request written to in/<verb>/ but never read back from
+                                        out/ (the Write-alone-is-not-a-dispatch non-dispatch)
   ccsniff --stats [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
@@ -372,6 +377,96 @@ if (opts['git-discipline']) {
     process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  ${v.cmd}\n`);
   }
   process.stderr.write(`# ${violations.length} violations (push-no-porcelain-witness)\n`);
+  process.exit(0);
+}
+
+// ---------- verb-bypass-discipline (a platform-native capability used where a plugkit verb exists)
+// The class rule: every platform-native tool that has a plugkit verb is forbidden in favor of the
+// verb — WebFetch/WebSearch -> the `fetch` verb; a Task/Agent search subagent -> `codesearch`; raw
+// puppeteer/playwright/chrome -> the `browser` verb; a Write into a platform memory dir -> `memorize-fire`.
+// High-precision per-tool patterns; each violation names the verb it should have used.
+if (opts['verb-bypass-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  const MEM_PATH = /[\/\\]\.(?:claude[\/\\]projects[\/\\].*[\/\\]memory|codex[\/\\]memory|cursor)[\/\\]/i;
+  const RAW_BROWSER = /\b(?:puppeteer|playwright|chromium|chrome\.exe|google-chrome|chrome-headless)\b|--headless\b/i;
+  const TASK_SEARCH = /\b(?:where is|what calls|locate the|search the (?:code|repo|codebase|tree)|grep the|explore the (?:code|repo|tree|codebase)|find (?:the )?(?:definition|usages?|references?|callers?|where))\b/i;
+  const violations = [];
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const name = ev.block?.name || '';
+    const input = ev.block?.input || {};
+    let kind = null, should = null, detail = '';
+    if (name === 'WebFetch') { kind = 'webfetch-not-fetch-verb'; should = 'fetch'; detail = String(input.url || '').slice(0, 120); }
+    else if (name === 'WebSearch') { kind = 'websearch-not-fetch-verb'; should = 'fetch'; detail = String(input.query || '').slice(0, 120); }
+    else if ((name === 'Task' || name === 'Agent') && TASK_SEARCH.test(stripQuoted(JSON.stringify(input)).slice(0, 600))) { kind = 'task-search-not-codesearch'; should = 'codesearch'; detail = String(input.description || input.prompt || '').slice(0, 120); }
+    else if (name === 'Bash' && RAW_BROWSER.test(stripQuoted(input.command || ''))) { kind = 'raw-browser-not-browser-verb'; should = 'browser'; detail = String(input.command || '').slice(0, 120); }
+    else if ((name === 'Write' || name === 'Edit' || name === 'NotebookEdit') && MEM_PATH.test(input.file_path || input.path || input.notebook_path || '')) { kind = 'platform-memory-not-memorize'; should = 'memorize-fire'; detail = String(input.file_path || input.path || input.notebook_path || '').slice(0, 120); }
+    if (!kind) continue;
+    violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, should, detail });
+  }
+  const byKind = new Map();
+  for (const v of violations) byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1);
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} verb-bypass-discipline violations\n`);
+    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  use:${v.should}  ${v.detail}\n`);
+  }
+  process.stderr.write(`# ${violations.length} violations (${[...byKind.entries()].map(([k, c]) => `${k}:${c}`).join(' ')})\n`);
+  process.exit(0);
+}
+
+// ---------- spool-discipline (a session that dispatches spool requests but reads NO responses)
+// "The Write alone is not a dispatch." A session that writes `.gm/exec-spool/in/<verb>/<N>.txt`
+// requests and reads ZERO `out/<...>.json` responses is fabricating the chain from prose — it never
+// observed a single plugkit response. Session-level by design: batching (write many, read the
+// first/last) is endorsed, so reading even one out/ response clears the session. Only a session that
+// reads none of its responses is flagged — high precision, no batching false-positive.
+if (opts['spool-discipline']) {
+  const includeSubagents = opts['include-subagents'];
+  const SPOOL_IN_WRITE = /(?:>\s*[^>|]*|file_path["'\s:]+["']?[^"']*)\.gm[\/\\]exec-spool[\/\\]in[\/\\][a-z0-9_-]+[\/\\]\d+\./i;
+  const SPOOL_OUT = /\.gm[\/\\]exec-spool[\/\\]out[\/\\]/i;
+  const sess = new Map();
+  for (const ev of all) {
+    if (!filter(ev)) continue;
+    if (ev.block?.type !== 'tool_use') continue;
+    if (!includeSubagents && ev.conversation?.isSubagent) continue;
+    const sid = ev.conversation.id;
+    if (!sess.has(sid)) sess.set(sid, { writes: 0, reads: 0, project: path.basename(ev.conversation.cwd || ''), firstTs: ev.timestamp, lastTs: ev.timestamp });
+    const s = sess.get(sid);
+    s.lastTs = ev.timestamp;
+    const b = ev.block, inp = b.input || {};
+    const blob = b.name === 'Write' ? (inp.file_path || '') : (b.name === 'Bash' ? (inp.command || '') : '');
+    if (blob && SPOOL_IN_WRITE.test(blob)) s.writes++;
+    const rblob = b.name === 'Read' ? (inp.file_path || '') : (b.name === 'Bash' ? (inp.command || '') : '');
+    if (rblob && SPOOL_OUT.test(rblob)) s.reads++;
+  }
+  const violations = [];
+  for (const [sid, s] of sess) {
+    if (s.writes >= 1 && s.reads === 0) violations.push({ ts: s.lastTs, sid, project: s.project, writes: s.writes });
+  }
+  if (opts.stats || opts.count) {
+    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
+    process.stdout.write(`# ${violations.length} spool-discipline violations (session dispatched spool writes but read 0 responses)\n`);
+    const byProj = new Map();
+    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
+    process.stdout.write(`# by project\n`);
+    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
+    process.exit(0);
+  }
+  for (const v of violations) {
+    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  spool-writes-no-reads  [${v.project}]  writes:${v.writes} reads:0\n`);
+  }
+  process.stderr.write(`# ${violations.length} sessions dispatched spool writes but read 0 responses\n`);
   process.exit(0);
 }
 
