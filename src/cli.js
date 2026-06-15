@@ -257,6 +257,17 @@ if (opts['list-projects']) {
   process.exit(0);
 }
 
+// Each --*-discipline below is its own one-shot report ending in process.exit(0), so only the
+// first requested discipline in source order would ever run. Combining flags (e.g.
+// `--git-discipline --search-discipline`) would silently drop every discipline but the first and
+// yield a false-clean audit. Fail loud instead of running one and dropping the rest.
+const DISCIPLINE_FLAGS = ['bash-discipline', 'git-discipline', 'verb-bypass-discipline', 'spool-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline'];
+const requestedDisciplines = DISCIPLINE_FLAGS.filter(d => opts[d]);
+if (requestedDisciplines.length > 1) {
+  process.stderr.write(`ccsniff: ${requestedDisciplines.length} discipline flags given (${requestedDisciplines.map(d => '--' + d).join(' ')}); each is a separate one-shot report and only the first would run. Invoke one discipline per call.\n`);
+  process.exit(2);
+}
+
 // ---------- bash-discipline (flag Bash calls that should have been Read/Glob/Grep/dispatch)
 if (opts['bash-discipline']) {
   // discipline is about MY tool routing, not subagents — they have separate prompts/contexts.

@@ -16,6 +16,8 @@ function testSearchDisciplineExemptions() {
     ['pushd sibling exempt', () => targetsOutsideCwd('pushd /c/dev/ccsniff; grep X', CWD), true],
     ['git -C inside cwd not exempt', () => targetsOutsideCwd('git -C /c/dev/gm/sub grep X', CWD), false],
     ['msys path form normalized', () => targetsOutsideCwd('grep X /c/dev/rs-learn/src/a.rs', CWD), true],
+    ['windows backslash sibling exempt', () => targetsOutsideCwd('C:\\dev\\ccsniff\\src\\cli.js', CWD), true],
+    ['windows backslash in-cwd not exempt', () => targetsOutsideCwd('C:\\dev\\gm\\AGENTS.md', CWD), false],
     ['single file exempt', () => targetsSingleFile('grep -n writeStatus gm-plugkit/wrapper.js'), true],
     ['single file with redirect exempt', () => targetsSingleFile("grep -n pat src/entry.rs 2>/dev/null"), true],
     ['recursive tree not single', () => targetsSingleFile('grep -r X src/'), false],

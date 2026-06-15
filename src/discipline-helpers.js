@@ -7,7 +7,7 @@ const isAbs = (d) => d.startsWith('/') || /^[a-z]:/.test(d);
 export function targetsOutsideCwd(line, cwd) {
   const cwdN = normPath(cwd);
   if (!cwdN) return false;
-  const stripped = stripQuoted(line);
+  const stripped = stripQuoted(line).replace(/\\/g, '/');
   const ctxM = stripped.match(/(?:^|[|&;]\s*)(?:cd|pushd)\s+([^\s|&;]+)/i) || stripped.match(/\bgit\s+-C\s+([^\s|&;]+)/i);
   if (ctxM) { const d = normPath(ctxM[1]); if (isAbs(d) && !d.startsWith(cwdN)) return true; }
   const absArgs = stripped.match(/(?:^|\s)((?:[a-z]:)?\/[^\s|&;"']+)/gi) || [];
