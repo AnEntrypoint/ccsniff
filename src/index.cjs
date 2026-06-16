@@ -199,7 +199,11 @@ class JsonlReplayer extends JsonlWatcher {
       } catch {}
     };
     if (fs.existsSync(this._dir)) collect(this._dir, 0);
-    const chosen = fileFilter ? all.filter(fileFilter) : all;
+    let chosen = fileFilter ? all.filter(fileFilter) : all;
+    if (since > 0) {
+      const cutoff = since - 300000;
+      chosen = chosen.filter(fp => { try { return fs.statSync(fp).mtimeMs >= cutoff; } catch { return true; } });
+    }
     let emitted = 0;
     for (const fp of chosen) {
       const fallbackSid = path.basename(fp, '.jsonl');
@@ -245,7 +249,7 @@ function vault({ projectsDir = DEFAULT_DIR, destDir = path.join(os.homedir(), '.
       try { srcStat = fs.statSync(srcPath); } catch { continue; }
       try {
         const dstStat = fs.statSync(dstPath);
-        if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs) { skipped++; continue; }
+        if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs - 2000) { skipped++; continue; }
       } catch {}
       try {
         fs.mkdirSync(path.dirname(dstPath), { recursive: true });

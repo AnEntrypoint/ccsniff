@@ -209,6 +209,10 @@ export class JsonlReplayer extends JsonlWatcher {
     };
     if (fs.existsSync(this._dir)) collect(this._dir, 0);
     let chosen = fileFilter ? all.filter(fileFilter) : all;
+    if (since > 0) {
+      const cutoff = since - 300000;
+      chosen = chosen.filter(fp => { try { return fs.statSync(fp).mtimeMs >= cutoff; } catch { return true; } });
+    }
     // When a maxEvents budget is set, read newest files first and stop once the
     // budget is met — so a huge projects tree never has its full backlog parsed
     // into the heap at once (the load-time memory peak this guards against).
@@ -264,7 +268,7 @@ export function vault({ projectsDir = DEFAULT_DIR, destDir = path.join(os.homedi
       try { srcStat = fs.statSync(srcPath); } catch { continue; }
       try {
         const dstStat = fs.statSync(dstPath);
-        if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs) { skipped++; continue; }
+        if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs - 2000) { skipped++; continue; }
       } catch {}
       try {
         fs.mkdirSync(path.dirname(dstPath), { recursive: true });
