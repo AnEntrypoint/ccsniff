@@ -20,9 +20,9 @@ export class JsonlWatcher extends EventEmitter {
     this._watcher = null;
   }
 
-  start() {
+  start(since = 0) {
     if (!fs.existsSync(this._dir)) return this;
-    this._scan(this._dir, 0);
+    this._scan(this._dir, 0, since);
     try {
       this._watcher = fs.watch(this._dir, { recursive: true }, (_, f) => {
         if (f && f.endsWith('.jsonl')) this._debounce(path.join(this._dir, f));
@@ -40,13 +40,18 @@ export class JsonlWatcher extends EventEmitter {
     this._timers.clear(); this._seqs.clear(); this._streaming.clear();
   }
 
-  _scan(dir, depth) {
+  _scan(dir, depth, since = 0) {
     if (depth > 4) return;
+    const cutoff = since > 0 ? since - 300000 : 0;
     try {
       for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
         const fp = path.join(dir, d.name);
-        if (d.isFile() && d.name.endsWith('.jsonl')) this._debounce(fp);
-        else if (d.isDirectory()) this._scan(fp, depth + 1);
+        if (d.isFile() && d.name.endsWith('.jsonl')) {
+          if (cutoff > 0) {
+            try { if (fs.statSync(fp).mtimeMs < cutoff) continue; } catch (_) {}
+          }
+          this._debounce(fp);
+        } else if (d.isDirectory()) this._scan(fp, depth + 1, since);
       }
     } catch (_) {}
   }

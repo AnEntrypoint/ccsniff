@@ -2,7 +2,6 @@
 import { JsonlReplayer, rollup, vault } from './index.js';
 import { toUnslothMessages, toShareGPT } from './unsloth.js';
 import { parseTime, compileRegexes, buildFilter } from './filters.js';
-import { stripQuoted, targetsOutsideCwd, targetsSingleFile } from './discipline-helpers.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -31,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'bash-discipline', 'git-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline', 'verb-bypass-discipline', 'spool-discipline', 'learning-xref', 'include-subagents', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h'],
 };
 
 function parseArgs(argv) {
@@ -64,21 +63,7 @@ USAGE
   ccsniff --list-sessions [filters]
   ccsniff --list-projects
   ccsniff --list-tools
-  ccsniff --bash-discipline [--stats]   Bash calls that should have used Read/Glob/Grep
-  ccsniff --learning-xref [--sess <id>] [--days N]   join transcript turns to rs-learn recall/memorize
-  ccsniff --git-discipline [--stats]    git push from a dirty/unwitnessed tree
-  ccsniff --search-discipline [--stats] native search (Grep/Glob/Explore/find) instead of codesearch/recall
-  ccsniff --glyph-discipline [--stats]  decorative glyphs (arrows/box/star/dot/check/emoji) written into files
-                                        (excludes subagents by default — --include-subagents to opt in;
-                                         excludes 'echo > .gm/exec-spool/in/...' as canonical spool-write)
-  ccsniff --continuation-discipline [--stats]  assistant turn that ends in prose with no tool call:
-                                        a summary, or deferred intent ("Let me X" / "I'll X" / "Now to")
-                                        as the final sentence — the toolless-turn stop (paper §38)
-  ccsniff --verb-bypass-discipline [--stats]   a platform-native tool used where a plugkit verb exists:
-                                        WebFetch/WebSearch->fetch, Task-search->codesearch,
-                                        raw puppeteer/chrome->browser, platform-memory Write->memorize-fire
-  ccsniff --spool-discipline [--stats]  a spool request written to in/<verb>/ but never read back from
-                                        out/ (the Write-alone-is-not-a-dispatch non-dispatch)
+  ccsniff --text [filters]              human-readable demarcated view of thinking/tool calls/actions
   ccsniff --stats [filters]
 
 TIME (any ISO date, epoch ms, or relative Ns/Nm/Nh/Nd/Nw)
@@ -117,11 +102,16 @@ OUTPUT
   --sort <key>           ts|sid|cwd|role|type (default ts)
   --count                print only the match count
   --stats                breakdown by role/type/tool/project/session
+  --text                 human-readable demarcated blocks (thinking/tool_use/tool_result/text)
   -f, --tail             live tail after replay
   --rollup <out>         dump filtered events to file
   --format ndjson|sqlite rollup format (default ndjson; sqlite needs better-sqlite3)
   --unsloth <out>        write Unsloth training JSONL (one conversation per session per line)
   --unsloth-format <fmt> messages (OpenAI/ChatML, default) | sharegpt
+
+LIMITS
+  by default, output caps at the 500 most recent matching events (after --limit/--tail-n/--ctx apply)
+  --full-history         disable the default 500-event cap and dump everything matched
 
 EXAMPLES
   ccsniff --since 24h --grep "rs-exec" --limit 50
@@ -170,6 +160,23 @@ function formatRow(ev, opts) {
   const tool = block.name ? `:${block.name}` : '';
   const tag = conv.isSubagent ? '*' : '';
   return `[${t}] [${repo}${tag}] ${ev.role}/${block.type || '?'}${tool}: ${out}\n`;
+}
+
+// Human-readable demarcated block per event — for watching an agent's thinking, tool calls,
+// and tool results go by as a live transcript rather than a dense single-line dump.
+function formatTextBlock(ev) {
+  const conv = ev.conversation || {};
+  const block = ev.block || {};
+  const t = new Date(ev.timestamp).toISOString().slice(0, 19).replace('T', ' ');
+  const repo = path.basename(conv.cwd || '');
+  const tag = conv.isSubagent ? ' (subagent)' : '';
+  const kind = block.type === 'tool_use' ? `tool_use: ${block.name || '?'}`
+    : block.type === 'tool_result' ? 'tool_result'
+    : block.type === 'thinking' ? 'thinking'
+    : block.type || ev.role;
+  const header = `==== [${t}] ${repo}${tag} :: ${ev.role} :: ${kind} ====`;
+  const body = blockText(block).trim();
+  return `${header}\n${body}\n\n`;
 }
 
 function collect(opts, since) {
@@ -227,9 +234,9 @@ if (opts.rollup) {
 // ---------- live tail (filter applied to live events)
 if (opts.tail) {
   const r = new JsonlReplayer();
-  r.on('streaming_progress', ev => { if (filter(ev)) process.stdout.write(formatRow(ev, opts)); });
+  r.on('streaming_progress', ev => { if (filter(ev)) process.stdout.write(opts.text ? formatTextBlock(ev) : formatRow(ev, opts)); });
   r.on('error', e => process.stderr.write(`error: ${e?.message || e}\n`));
-  r.start();
+  r.start(since);
   process.stdout.write('# tailing... (Ctrl-C to exit)\n');
   process.stdin.resume();
 } else {
@@ -254,493 +261,6 @@ if (opts['list-projects']) {
     process.stdout.write(`${new Date(x.last).toISOString().slice(0, 19)}  ${String(x.sessions.size).padStart(4)} sess  ${String(x.events).padStart(7)} ev  ${p}\n`);
   }
   process.stderr.write(`# ${rows.length} projects\n`);
-  process.exit(0);
-}
-
-// Each --*-discipline below is its own one-shot report ending in process.exit(0), so only the
-// first requested discipline in source order would ever run. Combining flags (e.g.
-// `--git-discipline --search-discipline`) would silently drop every discipline but the first and
-// yield a false-clean audit. Fail loud instead of running one and dropping the rest.
-const DISCIPLINE_FLAGS = ['bash-discipline', 'git-discipline', 'verb-bypass-discipline', 'spool-discipline', 'search-discipline', 'glyph-discipline', 'continuation-discipline'];
-const requestedDisciplines = DISCIPLINE_FLAGS.filter(d => opts[d]);
-if (requestedDisciplines.length > 1) {
-  process.stderr.write(`ccsniff: ${requestedDisciplines.length} discipline flags given (${requestedDisciplines.map(d => '--' + d).join(' ')}); each is a separate one-shot report and only the first would run. Invoke one discipline per call.\n`);
-  process.exit(2);
-}
-
-// ---------- bash-discipline (flag Bash calls that should have been Read/Glob/Grep/dispatch)
-if (opts['bash-discipline']) {
-  // discipline is about MY tool routing, not subagents — they have separate prompts/contexts.
-  // Default: exclude subagents. --include-subagents opts them back in.
-  const includeSubagents = opts['include-subagents'];
-  const BAD_LEADING = /^\s*(cat|head|tail|ls|grep|find|sed|awk)\b/;
-  const SLEEP_POLL = /\bsleep\s+\d+\s*;.*(cat|ls|grep|find|head|tail)/;
-  const SPOOL_WRITE = /\.gm\/exec-spool\/in\//;
-  // The host harness explicitly endorses `until <check>; do sleep N; done` as
-  // the canonical pattern for polling external state (see Bash tool description
-  // and Monitor docs). Same for `while !curl ...; do sleep N; done`. These are
-  // NOT sleep-poll violations even though they contain `sleep N`.
-  const ENDORSED_POLL = /^\s*(until|while)\s+/;
-  // gm-skill SKILL.md prescribes the boot probe `cat .gm/exec-spool/.status.json; date +%s%3N`
-  // to compare watcher heartbeat against current epoch. The cat is canonical, not a deviation.
-  // Same for reading .watcher.log diagnostics directly.
-  const CANONICAL_BOOT_PROBE = /\.gm\/exec-spool\/\.(status\.json|watcher\.log|bootstrap-(status|error)\.json|last-session-start\.json)/;
-  // Observability surfaces — multi-file pattern scans over JSONL logs and transcript dirs
-  // legitimately need grep/tail/cat because Read tool can't stream multi-file or pipe to head -c.
-  // gm-log/<day>/*.jsonl, .claude/projects/*/*.jsonl, and *.jsonl in general are the canonical
-  // observability targets per AGENTS.md "rs-learn observability" entry.
-  const OBSERVABILITY_TARGET = /\.(jsonl|ndjson|log)\b|gm-log\/|\.claude\/projects\//;
-  const violations = [];
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use' || ev.block?.name !== 'Bash') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const cmd = ev.block?.input?.command || '';
-    // `echo > .gm/exec-spool/in/<verb>/N.txt` is the canonical spool-write pattern, not a deviation.
-    if (SPOOL_WRITE.test(cmd) && /^\s*echo\b/.test(cmd)) continue;
-    // `until ...; do sleep N; done` is the harness-endorsed poll pattern.
-    if (ENDORSED_POLL.test(cmd)) continue;
-    // Canonical gm-skill boot/diagnostic probes (cat .status.json; date +%s%3N etc.) are prescribed by SKILL.md.
-    if (CANONICAL_BOOT_PROBE.test(cmd)) continue;
-    // Observability surface reads — grep/cat/tail over JSONL logs and transcript dirs are legit (Read tool can't stream/multi-file).
-    if (OBSERVABILITY_TARGET.test(cmd)) continue;
-    const kind = SLEEP_POLL.test(cmd) ? 'sleep-poll' : (BAD_LEADING.test(cmd) ? 'bad-leading-cmd' : null);
-    if (!kind) continue;
-    violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, cmd: cmd.slice(0, 200) });
-  }
-  const byKind = new Map();
-  for (const v of violations) byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1);
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    const subagentNote = includeSubagents ? '' : ' (subagents excluded — pass --include-subagents to include)';
-    process.stdout.write(`# ${violations.length} bash-discipline violations${subagentNote}\n`);
-    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    const byDay = new Map();
-    for (const v of violations) {
-      const day = new Date(v.ts).toISOString().slice(0, 10);
-      byDay.set(day, (byDay.get(day) || 0) + 1);
-    }
-    if (byDay.size > 1) {
-      process.stdout.write(`# by day\n`);
-      for (const [d, c] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) process.stdout.write(`  ${String(c).padStart(6)}  ${d}\n`);
-    }
-    const byHour = new Map();
-    for (const v of violations) {
-      const hour = new Date(v.ts).toISOString().slice(0, 13);
-      byHour.set(hour, (byHour.get(hour) || 0) + 1);
-    }
-    if (byHour.size > 1) {
-      process.stdout.write(`# by hour (last 12)\n`);
-      const sorted = [...byHour.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-12);
-      for (const [h, c] of sorted) process.stdout.write(`  ${String(c).padStart(6)}  ${h}:00\n`);
-    }
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(15)} [${v.project}]  ${v.cmd}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations (${[...byKind.entries()].map(([k, c]) => `${k}:${c}`).join(' ')})\n`);
-  process.exit(0);
-}
-
-if (opts['git-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  const PUSH = /\bgit\s+push\b/;
-  const PORCELAIN_CLEAN = /\bgit\s+status\s+(--porcelain|-s)\b/;
-  const stripQuoted = (s) => s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
-  const bySid = new Map();
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use' || ev.block?.name !== 'Bash') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const sid = ev.conversation.id;
-    if (!bySid.has(sid)) bySid.set(sid, []);
-    bySid.get(sid).push(ev);
-  }
-  const violations = [];
-  for (const [sid, evs] of bySid) {
-    evs.sort((a, b) => a.timestamp - b.timestamp);
-    for (let i = 0; i < evs.length; i++) {
-      const ev = evs[i];
-      const cmd = ev.block?.input?.command || '';
-      const cmdStripped = stripQuoted(cmd);
-      if (!PUSH.test(cmdStripped)) continue;
-      const lookback = evs.slice(Math.max(0, i - 20), i);
-      const witnessed = lookback.some(e => PORCELAIN_CLEAN.test(stripQuoted(e.block?.input?.command || '')));
-      if (witnessed) continue;
-      violations.push({ ts: ev.timestamp, sid, project: path.basename(ev.conversation.cwd || ''), kind: 'push-no-porcelain-witness', cmd: cmd.slice(0, 200) });
-    }
-  }
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} git-discipline violations\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  ${v.cmd}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations (push-no-porcelain-witness)\n`);
-  process.exit(0);
-}
-
-// ---------- verb-bypass-discipline (a platform-native capability used where a plugkit verb exists)
-// The class rule: every platform-native tool that has a plugkit verb is forbidden in favor of the
-// verb — WebFetch/WebSearch -> the `fetch` verb; a Task/Agent search subagent -> `codesearch`; raw
-// puppeteer/playwright/chrome -> the `browser` verb; a Write into a platform memory dir -> `memorize-fire`.
-// High-precision per-tool patterns; each violation names the verb it should have used.
-if (opts['verb-bypass-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  const MEM_PATH = /[\/\\]\.(?:claude[\/\\]projects[\/\\].*[\/\\]memory|codex[\/\\]memory|cursor)[\/\\]/i;
-  const RAW_BROWSER = /\b(?:puppeteer|playwright|chromium|chrome\.exe|google-chrome|chrome-headless)\b|--headless\b/i;
-  const TASK_SEARCH = /\b(?:where is|what calls|locate the|search the (?:code|repo|codebase|tree)|grep the|explore the (?:code|repo|tree|codebase)|find (?:the )?(?:definition|usages?|references?|callers?|where))\b/i;
-  const violations = [];
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const name = ev.block?.name || '';
-    const input = ev.block?.input || {};
-    let kind = null, should = null, detail = '';
-    if (name === 'WebFetch') { kind = 'webfetch-not-fetch-verb'; should = 'fetch'; detail = String(input.url || '').slice(0, 120); }
-    else if (name === 'WebSearch') { kind = 'websearch-not-fetch-verb'; should = 'fetch'; detail = String(input.query || '').slice(0, 120); }
-    else if ((name === 'Task' || name === 'Agent') && TASK_SEARCH.test(stripQuoted(JSON.stringify(input)).slice(0, 600))) { kind = 'task-search-not-codesearch'; should = 'codesearch'; detail = String(input.description || input.prompt || '').slice(0, 120); }
-    else if (name === 'Bash' && RAW_BROWSER.test(stripQuoted(input.command || ''))) { kind = 'raw-browser-not-browser-verb'; should = 'browser'; detail = String(input.command || '').slice(0, 120); }
-    else if ((name === 'Write' || name === 'Edit' || name === 'NotebookEdit') && MEM_PATH.test(input.file_path || input.path || input.notebook_path || '')) { kind = 'platform-memory-not-memorize'; should = 'memorize-fire'; detail = String(input.file_path || input.path || input.notebook_path || '').slice(0, 120); }
-    if (!kind) continue;
-    violations.push({ ts: ev.timestamp, sid: ev.conversation.id, project: path.basename(ev.conversation.cwd || ''), kind, should, detail });
-  }
-  const byKind = new Map();
-  for (const v of violations) byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1);
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} verb-bypass-discipline violations\n`);
-    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(28)} [${v.project}]  use:${v.should}  ${v.detail}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations (${[...byKind.entries()].map(([k, c]) => `${k}:${c}`).join(' ')})\n`);
-  process.exit(0);
-}
-
-// ---------- spool-discipline (a session that dispatches spool requests but reads NO responses)
-// "The Write alone is not a dispatch." A session that writes `.gm/exec-spool/in/<verb>/<N>.txt`
-// requests and reads ZERO `out/<...>.json` responses is fabricating the chain from prose — it never
-// observed a single plugkit response. Session-level by design: batching (write many, read the
-// first/last) is endorsed, so reading even one out/ response clears the session. Only a session that
-// reads none of its responses is flagged — high precision, no batching false-positive.
-if (opts['spool-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  const SPOOL_IN_WRITE = /(?:>\s*[^>|]*|file_path["'\s:]+["']?[^"']*)\.gm[\/\\]exec-spool[\/\\]in[\/\\][a-z0-9_-]+[\/\\]\d+\./i;
-  const SPOOL_OUT = /\.gm[\/\\]exec-spool[\/\\]out[\/\\]/i;
-  const sess = new Map();
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const sid = ev.conversation.id;
-    if (!sess.has(sid)) sess.set(sid, { writes: 0, reads: 0, project: path.basename(ev.conversation.cwd || ''), firstTs: ev.timestamp, lastTs: ev.timestamp });
-    const s = sess.get(sid);
-    s.lastTs = ev.timestamp;
-    const b = ev.block, inp = b.input || {};
-    const blob = b.name === 'Write' ? (inp.file_path || '') : (b.name === 'Bash' ? (inp.command || '') : '');
-    if (blob && SPOOL_IN_WRITE.test(blob)) s.writes++;
-    const rblob = b.name === 'Read' ? (inp.file_path || '') : (b.name === 'Bash' ? (inp.command || '') : '');
-    if (rblob && SPOOL_OUT.test(rblob)) s.reads++;
-  }
-  const violations = [];
-  for (const [sid, s] of sess) {
-    if (s.writes >= 1 && s.reads === 0) violations.push({ ts: s.lastTs, sid, project: s.project, writes: s.writes });
-  }
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} spool-discipline violations (session dispatched spool writes but read 0 responses)\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  spool-writes-no-reads  [${v.project}]  writes:${v.writes} reads:0\n`);
-  }
-  process.stderr.write(`# ${violations.length} sessions dispatched spool writes but read 0 responses\n`);
-  process.exit(0);
-}
-
-// ---------- search-discipline (flag native search that should have been codesearch/recall)
-// A native-search bypass (Grep/Glob, the Explore/Task search subagent, or bash grep/rg/find/ag)
-// emits NO plugkit deviation because it never touches the spool — it is invisible to gmsniff and
-// the watcher ledger. ccsniff reads the tool-call stream directly, so it is the only surface that
-// can catch the SKILL.md class-rule violation: code/file/symbol search routes through codesearch,
-// prior-knowledge through recall, never a host-native search tool.
-if (opts['search-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  const BASH_SEARCH = /(^|[|&;]|\s)(rg|grep|find|ag|ack|fd|fgrep|egrep)\s/;
-  // stripQuoted, targetsOutsideCwd (cwd-override + cross-repo exemption), and targetsSingleFile
-  // (single-file read-filter exemption) live in discipline-helpers.js so they are unit-testable
-  // without running the CLI. codesearch indexes only the conversation cwd, so a cross-repo or
-  // single-file grep has no index to route through and flagging it is a false positive.
-  const violations = [];
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const name = ev.block?.name || '';
-    const project = path.basename(ev.conversation?.cwd || '');
-    const ts = ev.timestamp, sid = ev.conversation?.id || '';
-    let kind = null, detail = '';
-    if (name === 'Grep' || name === 'Glob') {
-      // A Grep/Glob whose path points outside the cwd targets a sibling repo with no codesearch
-      // index — exempt it, same as a cross-repo bash search.
-      const gp = ev.block?.input?.path;
-      if (gp && targetsOutsideCwd(gp, ev.conversation?.cwd)) { /* cross-repo, exempt */ }
-      else {
-        kind = `native-search-${name.toLowerCase()}`;
-        detail = (ev.block?.input?.pattern || ev.block?.input?.query || '').slice(0, 120);
-      }
-    } else if (name === 'Task' || name === 'Agent') {
-      const sub = (ev.block?.input?.subagent_type || ev.block?.input?.description || '').toLowerCase();
-      if (/explore|search|general-purpose/.test(sub)) {
-        kind = 'native-search-subagent';
-        detail = sub.slice(0, 120);
-      }
-    } else if (name === 'Bash') {
-      const cmd = ev.block?.input?.command || '';
-      // A search tool fed by a pipe (`<cmd> | grep ...`) is filtering another command's stdout,
-      // not searching the codebase tree — codesearch has no equivalent for that and it is not the
-      // bypass the rule targets. Flag only a search tool that STARTS a pipeline segment (reads the
-      // tree directly), never one immediately downstream of a pipe.
-      // A line whose first non-space token is `#` is a shell comment, not a command — never a search.
-      const isTreeSearchLine = (line) => !/^\s*#/.test(line) && BASH_SEARCH.test(stripQuoted(line).split('|')[0]);
-      const hitLine = cmd.split('\n').find(isTreeSearchLine);
-      // Exempt a tree-search line that targets a sibling repo outside cwd (no codesearch index exists
-      // for it), or that greps ONE explicit file (a read-filter codesearch cannot serve). Each
-      // command may cd/git -C first, so evaluate the context on the same line.
-      if (hitLine && !targetsOutsideCwd(hitLine, ev.conversation?.cwd) && !targetsSingleFile(hitLine)) {
-        kind = 'native-search-bash';
-        detail = (hitLine.split('|')[0]).trim().slice(0, 120);
-      }
-    }
-    if (kind) violations.push({ ts, sid, project, kind, detail });
-  }
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} search-discipline violations (native search instead of codesearch/recall)\n`);
-    const byKind = new Map(), byProj = new Map();
-    for (const v of violations) { byKind.set(v.kind, (byKind.get(v.kind) || 0) + 1); byProj.set(v.project, (byProj.get(v.project) || 0) + 1); }
-    process.stdout.write(`# by kind\n`);
-    for (const [k, c] of [...byKind.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${k}\n`);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(24)} [${v.project}]  ${v.detail}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations — use codesearch (code/file/symbol) or recall (prior knowledge) instead\n`);
-  process.exit(0);
-}
-
-// ---------- glyph-discipline (flag decorative graphical symbols written into files)
-// The gm SKILL.md rule forbids decorative glyphs (arrows, box/geometric glyphs, stars, dots,
-// bullets, checkmarks, crosses, emojis) in output and source; they must convert to ASCII on sight.
-// A glyph written into a file via Write/Edit is invisible to the spool ledger, so ccsniff reading
-// the tool-call stream is the surface that catches it. Functional operators are ASCII and never match.
-if (opts['glyph-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  const GLYPH = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/u;
-  const GLYPH_G = /[←-⇿⌀-⏿■-◿☀-➿⬀-⯿]|[\u{1F000}-\u{1FAFF}]/gu;
-  // Glyphs inside a regex char-class (e.g. /[←-⇿]/) are a detector/range DEFINITION, not decorative
-  // prose — blank those bracket bodies before testing so a glyph-rule definition does not flag itself.
-  const stripGlyphCharClass = (s) => s.replace(/\[[^\]\n]*\]/g, (m) => GLYPH.test(m) ? '[]' : m);
-  const violations = [];
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.block?.type !== 'tool_use') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const name = ev.block?.name || '';
-    if (name !== 'Write' && name !== 'Edit' && name !== 'NotebookEdit') continue;
-    const inp = ev.block?.input || {};
-    const filePath = inp.file_path || inp.notebook_path || '';
-    const rawContent = [inp.content, inp.new_string, inp.new_source].filter(s => typeof s === 'string').join('\n');
-    const content = stripGlyphCharClass(rawContent);
-    if (!content || !GLYPH.test(content)) continue;
-    const glyphs = [...new Set((content.match(GLYPH_G) || []))].slice(0, 10).join(' ');
-    violations.push({ ts: ev.timestamp, sid: ev.conversation?.id || '', project: path.basename(ev.conversation?.cwd || ''), kind: 'glyph-written', file: path.basename(filePath), glyphs });
-  }
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} glyph-discipline violations (decorative glyphs written to files)\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(14)} [${v.project}]  ${v.file}  ${v.glyphs}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations — convert decorative glyphs to ASCII (-> for arrow, - or * for bullet, [x]/[ ] for check/cross)\n`);
-  process.exit(0);
-}
-
-// ---------- continuation-discipline (flag the toolless-turn stop: paper §38)
-// An assistant message whose blocks contain NO tool_use, ending in prose, IS the turn ending —
-// the harness reads only tool calls, so the session halts there. Two faces: a backward-facing
-// summary, and deferred intent (a turn-final sentence naming the next move instead of making it,
-// "Let me read X" / "I'll start with Y" / "Now to the core"). The plugkit watchdog catches a
-// permanent stall at runtime; this catches the linguistic signature post-hoc in the transcript,
-// where each block of one assistant message shares a (sid, timestamp) group.
-if (opts['continuation-discipline']) {
-  const includeSubagents = opts['include-subagents'];
-  // Match against the LAST sentence of the message, extracted first — the deferred-intent or
-  // summary phrase opens that final clause. Testing the whole multi-paragraph blob with a
-  // start-anchor fails because the trailing sentence rarely begins right after a clean boundary.
-  const lastSentenceOf = (t) => {
-    const s = t.trimEnd();
-    const m = s.match(/[^.!?\n]*[.!?]?\s*$/);
-    let sent = (m ? m[0] : s).trim();
-    if (sent.length < 4) { const m2 = s.match(/[^\n]*$/); sent = (m2 ? m2[0] : s).trim(); }
-    return sent;
-  };
-  const DEFERRED = /^\s*(let me|let's|i'?ll|i will|i'?m going to|i am going to|now to|now,? to|next,? i|next i'?ll|now i'?ll|now i need to|i need to|i should|time to|i'?m about to)\b/i;
-  const SUMMARY = /^\s*(in summary|to summarize|here'?s what i (did|changed)|that'?s (it|done|all)|all done|the work is (now )?(done|complete)|i'?ve (now )?(completed|finished|done))\b/i;
-  // Group by the real per-message id (msgId), not (sid,ts): a text block and its tool_use share
-  // one message. The discriminator for a genuine stop is stop_reason === 'end_turn' — a message
-  // that ends with a tool_use carries stop_reason 'tool_use' and a tool followed, so it is NOT a
-  // stop even if its text says "Let me X". Only an end_turn message ending in text is the harness
-  // halting on prose. Gating on end_turn is what separates the true stop from think-then-act.
-  const byMsg = new Map();
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (ev.role !== 'assistant') continue;
-    if (!includeSubagents && ev.conversation?.isSubagent) continue;
-    const b = ev.block || {};
-    const key = `${ev.conversation?.id || ''}|${b.msgId || ev.timestamp}`;
-    if (!byMsg.has(key)) byMsg.set(key, { sid: ev.conversation?.id || '', cwd: ev.conversation?.cwd || '', ts: ev.timestamp, hasTool: false, lastText: '', stopReason: null });
-    const m = byMsg.get(key);
-    if (b.stopReason) m.stopReason = b.stopReason;
-    if (b.type === 'tool_use') m.hasTool = true;
-    else if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) m.lastText = b.text;
-  }
-  const violations = [];
-  for (const [, m] of byMsg) {
-    if (m.hasTool) continue;
-    if (m.stopReason !== 'end_turn') continue;
-    if (!m.lastText.trim()) continue;
-    const lastSentence = lastSentenceOf(m.lastText);
-    if (!lastSentence) continue;
-    const kind = DEFERRED.test(lastSentence) ? 'deferred-intent' : (SUMMARY.test(lastSentence) ? 'summary' : null);
-    if (!kind) continue;
-    violations.push({ ts: m.ts, sid: m.sid, project: path.basename(m.cwd || ''), kind, tail: lastSentence.slice(0, 160) });
-  }
-  violations.sort((a, b) => a.ts - b.ts);
-  if (opts.stats || opts.count) {
-    if (opts.count) { process.stdout.write(`${violations.length}\n`); process.exit(0); }
-    process.stdout.write(`# ${violations.length} continuation-discipline violations (toolless-turn stops)\n`);
-    const byProj = new Map();
-    for (const v of violations) byProj.set(v.project, (byProj.get(v.project) || 0) + 1);
-    process.stdout.write(`# by project\n`);
-    for (const [p, c] of [...byProj.entries()].sort((a, b) => b[1] - a[1])) process.stdout.write(`  ${String(c).padStart(6)}  ${p}\n`);
-    process.exit(0);
-  }
-  for (const v of violations) {
-    process.stdout.write(`${new Date(v.ts).toISOString().slice(0, 19)}  ${v.sid.slice(0, 8)}  ${v.kind.padEnd(15)} [${v.project}]  ${v.tail}\n`);
-  }
-  process.stderr.write(`# ${violations.length} violations — a turn ending in prose with no tool call is a stop; take the move instead of announcing it\n`);
-  process.exit(0);
-}
-
-// ---------- learning-xref (join transcript turns to gm-log rs_learn signals)
-if (opts['learning-xref']) {
-  const days = opts.days || 1;
-  const wantSess = opts.sess || null;
-  const bySid = new Map();
-  for (const ev of all) {
-    if (!filter(ev)) continue;
-    if (wantSess && !ev.conversation?.id?.startsWith(wantSess)) continue;
-    const sid = ev.conversation?.id;
-    if (!sid) continue;
-    if (!bySid.has(sid)) bySid.set(sid, { cwd: ev.conversation.cwd, evs: [] });
-    bySid.get(sid).evs.push(ev);
-  }
-  const dates = [];
-  const now = Date.now();
-  for (let i = 0; i < days; i++) {
-    dates.push(new Date(now - i * 86400000).toISOString().slice(0, 10));
-  }
-  const gmLogDir = path.join(os.homedir(), '.claude', 'gm-log');
-  const rsLearn = [], bootstrap = [];
-  for (const d of dates) {
-    for (const [file, sink] of [['rs_learn.jsonl', rsLearn], ['bootstrap.jsonl', bootstrap]]) {
-      const fp = path.join(gmLogDir, d, file);
-      if (!fs.existsSync(fp)) continue;
-      const lines = fs.readFileSync(fp, 'utf8').split('\n');
-      for (const ln of lines) {
-        if (!ln.trim()) continue;
-        try {
-          const j = JSON.parse(ln);
-          const ts = typeof j.ts === 'number' ? j.ts : Date.parse(j.ts);
-          if (Number.isFinite(ts)) { j._ts = ts; sink.push(j); }
-        } catch {}
-      }
-    }
-  }
-  rsLearn.sort((a, b) => a._ts - b._ts);
-  let totals = { turns: 0, tool_uses: 0, memorize: 0, recall: 0, hit: 0, miss: 0, embed_fail: 0 };
-  let anyMatched = 0;
-  for (const [sid, info] of bySid) {
-    info.evs.sort((a, b) => a.timestamp - b.timestamp);
-    const project = path.basename(info.cwd || '');
-    const skillTs = info.evs
-      .filter(e => e.block?.type === 'tool_use' && e.block?.name === 'Skill' && e.block?.input?.skill === 'gm-skill')
-      .map(e => e.timestamp);
-    if (!skillTs.length) continue;
-    const sessFirst = info.evs[0].timestamp;
-    const sessLast = info.evs[info.evs.length - 1].timestamp;
-    const bounds = [...skillTs, sessLast + 1];
-    process.stdout.write(`# session ${sid.slice(0, 8)} [${project}] turns=${skillTs.length}\n`);
-    for (let i = 0; i < skillTs.length; i++) {
-      const winStart = bounds[i];
-      const winEnd = bounds[i + 1];
-      const toolUses = info.evs.filter(e => e.timestamp >= winStart && e.timestamp < winEnd && e.block?.type === 'tool_use').length;
-      const rsInWin = rsLearn.filter(j => j._ts >= winStart && j._ts < winEnd && (!j.project || j.project === project) && (!wantSess || !j.sess || j.sess === sid || sid.startsWith(j.sess)));
-      let memorize = 0, recall = 0, hit = 0, miss = 0, embed_fail = 0;
-      for (const j of rsInWin) {
-        if (j.event === 'memorize') memorize++;
-        else if (j.event === 'recall') { recall++; if (j.hit) hit++; else miss++; }
-        else if (j.event === 'embed_fail' || /embed.*fail/i.test(j.event || '')) embed_fail++;
-      }
-      anyMatched += rsInWin.length;
-      totals.turns++;
-      totals.tool_uses += toolUses;
-      totals.memorize += memorize;
-      totals.recall += recall;
-      totals.hit += hit;
-      totals.miss += miss;
-      totals.embed_fail += embed_fail;
-      const ts = new Date(winStart).toISOString().slice(0, 19).replace('T', ' ');
-      process.stdout.write(`${ts} | tool_uses=${toolUses} | memorize=${memorize} | recall=${recall} (hit=${hit} miss=${miss}) | embed_fail=${embed_fail}\n`);
-    }
-  }
-  if (anyMatched === 0 && wantSess) {
-    process.stdout.write(`# no rs-learn events for sess ${wantSess} — confirm bootstrap fires gm-log writes\n`);
-  }
-  process.stderr.write(`# totals: sessions=${bySid.size} turns=${totals.turns} tool_uses=${totals.tool_uses} memorize=${totals.memorize} recall=${totals.recall} (hit=${totals.hit} miss=${totals.miss}) embed_fail=${totals.embed_fail} (scanned ${dates.length}d, rs_learn=${rsLearn.length} bootstrap=${bootstrap.length})\n`);
   process.exit(0);
 }
 
@@ -794,6 +314,13 @@ if (opts['tail-n']) rows = rows.slice(-opts['tail-n']);
 const limit = opts.limit || opts.head || 0;
 if (limit) rows = rows.slice(0, limit);
 
+const DEFAULT_CAP = 500;
+let capped = 0;
+if (!opts['full-history'] && !opts.stats && !opts.count && !opts.unsloth && rows.length > DEFAULT_CAP) {
+  capped = rows.length - DEFAULT_CAP;
+  rows = rows.slice(-DEFAULT_CAP);
+}
+
 // ---------- stats
 if (opts.stats) {
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
@@ -832,8 +359,9 @@ if (opts.unsloth) {
   process.exit(0);
 }
 
-for (const ev of rows) process.stdout.write(formatRow(ev, opts));
-process.stderr.write(`# ${stats.events} events / ${stats.files} files / ${rows.length} matched\n`);
+for (const ev of rows) process.stdout.write(opts.text ? formatTextBlock(ev) : formatRow(ev, opts));
+const capNote = capped ? ` (${capped} older events hidden by default cap — pass --full-history to see all)` : '';
+process.stderr.write(`# ${stats.events} events / ${stats.files} files / ${rows.length} matched${capNote}\n`);
 
 }
 }
