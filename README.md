@@ -56,7 +56,12 @@ npx ccsniff -f                     # tail new events live
 npx ccsniff --rollup out.ndjson --since 7d
 npx ccsniff --unsloth train.jsonl --since 7d --no-subagents
 npx ccsniff --unsloth train.jsonl --unsloth-format sharegpt --since 7d
+npx ccsniff --git-discipline --since 7d --project myrepo
+npx ccsniff --search-discipline --since 7d
+npx ccsniff --glyph-discipline --since 24h
 ```
+
+Discipline audits: `--git-discipline` flags `git push` without a prior separate `git status --porcelain` Bash event and raw git push/commit inside gm (spool-dispatching) sessions; `--search-discipline` flags Grep/Glob discovery events inside gm sessions; `--glyph-discipline` flags decorative non-ASCII glyphs in assistant text (code blocks excluded). All compose with `--project`/`--since`.
 
 ### Unsloth training export
 

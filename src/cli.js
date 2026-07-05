@@ -30,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h', 'git-discipline', 'search-discipline', 'glyph-discipline'],
 };
 
 function parseArgs(argv) {
@@ -108,6 +108,11 @@ OUTPUT
   --format ndjson|sqlite rollup format (default ndjson; sqlite needs better-sqlite3)
   --unsloth <out>        write Unsloth training JSONL (one conversation per session per line)
   --unsloth-format <fmt> messages (OpenAI/ChatML, default) | sharegpt
+
+AUDIT
+  --git-discipline       flag git push without prior separate porcelain event; raw git push/commit in gm sessions
+  --search-discipline    flag Grep/Glob discovery events inside gm (spool-dispatching) sessions
+  --glyph-discipline     flag decorative non-ASCII glyphs in assistant text (code blocks excluded)
 
 LIMITS
   by default, output caps at the 500 most recent matching events (after --limit/--tail-n/--ctx apply)
@@ -243,6 +248,17 @@ if (opts.tail) {
 
 // ---------- one-shot collection (everything else needs the full set)
 const { stats, all } = collect(opts, since);
+
+// ---------- discipline audits
+if (opts['git-discipline'] || opts['search-discipline'] || opts['glyph-discipline']) {
+  const { gitDiscipline, searchDiscipline, glyphDiscipline } = await import('./discipline.js');
+  const rows = all.filter(filter);
+  if (opts['git-discipline']) gitDiscipline(rows);
+  if (opts['search-discipline']) searchDiscipline(rows);
+  if (opts['glyph-discipline']) glyphDiscipline(rows);
+  process.stderr.write(`# ${stats.events} events / ${stats.files} files / ${rows.length} in scope\n`);
+  process.exit(0);
+}
 
 // ---------- list-projects
 if (opts['list-projects']) {
