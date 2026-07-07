@@ -7,7 +7,9 @@ node_modules/
 .code-search/
 .codeinsight
 *.stackdump
-.gm/
+.gm/*
+!.gm/memories/
+.gm/memories/.flat-export-done
 rs-learn.db
 dist/
 .codeinsight/
