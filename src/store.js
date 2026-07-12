@@ -182,7 +182,7 @@ export class Store {
       let s = map.get(e.sid);
       if (!s) {
         const conv = this.convs.get(e.sid) || {};
-        s = { sid: e.sid, title: conv.title || '', project: e.project, cwd: e.cwd, parent: e.parent, isSubagent: e.isSubagent, first: e.ts, last: e.ts, events: 0, tools: 0, userTurns: 0, cost: 0, errors: 0 };
+        s = { sid: e.sid, title: conv.title || '', project: e.project, cwd: e.cwd, parent: e.parent, isSubagent: e.isSubagent, first: e.ts, last: e.ts, events: 0, tools: 0, userTurns: 0, cost: 0, errors: 0, model: null };
         map.set(e.sid, s);
       }
       s.events++;
@@ -192,7 +192,14 @@ export class Store {
       if (e.role === 'user' && e.type === 'text') s.userTurns++;
       if (e.cost) s.cost += e.cost;
       if (e.isError) s.errors++;
+      // The most recent event carrying a model wins - a session record should
+      // reflect what the conversation is CURRENTLY using, not its first turn's
+      // model if it changed mid-conversation. Events are not guaranteed to
+      // arrive in ts order (JSONL is read file-by-file), so use ts to decide
+      // recency rather than assuming append order.
+      if (e.model && (s._modelTs == null || e.ts >= s._modelTs)) { s.model = e.model; s._modelTs = e.ts; }
     }
+    for (const s of map.values()) delete s._modelTs;
     return [...map.values()].sort((a, b) => b.last - a.last);
   }
 
