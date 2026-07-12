@@ -165,7 +165,12 @@ export class JsonlWatcher extends EventEmitter {
       const newBlocks = e.message.content.slice(prev);
       if (newBlocks.length > 0) {
         this._emitted.set(key, e.message.content.length);
-        for (const b of newBlocks) if (b?.type) this._push(conv, sid, { ...b, msgId: e.message.id, stopReason: e.message.stop_reason || null }, 'assistant', ets);
+        // The model actually used lives at message.model on assistant events
+        // (the 'system'/init event's model reflects the CONFIGURED model, which
+        // can diverge from what a given turn actually ran on, e.g. a fallback).
+        // Every pushed block inherits it so flattenEvent's model field is
+        // populated for content blocks too, not only system events.
+        for (const b of newBlocks) if (b?.type) this._push(conv, sid, { ...b, model: b.model || e.message.model, msgId: e.message.id, stopReason: e.message.stop_reason || null }, 'assistant', ets);
       }
       if (e.message.stop_reason) this._emitted.delete(key);
       return;
