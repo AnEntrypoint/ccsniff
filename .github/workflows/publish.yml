@@ -14,6 +14,7 @@ concurrency:
 jobs:
   bump-and-publish:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     steps:
       - uses: actions/checkout@v4
         with:

@@ -332,7 +332,7 @@ if (limit) rows = rows.slice(0, limit);
 
 const DEFAULT_CAP = 500;
 let capped = 0;
-if (!opts['full-history'] && !opts.stats && !opts.count && !opts.unsloth && rows.length > DEFAULT_CAP) {
+  if (!opts['full-history'] && !opts.stats && !opts.count && !opts.unsloth && !opts.json && !opts.ndjson && rows.length > DEFAULT_CAP) {
   capped = rows.length - DEFAULT_CAP;
   rows = rows.slice(-DEFAULT_CAP);
 }
