@@ -1,9 +1,9 @@
 import { mount, components as C, h } from 'anentrypoint-design';
 
-const TABS = ['overview', 'sessions', 'projects', 'tools', 'timeline', 'errors', 'subagents', 'events', 'live', 'search'];
+const TABS = ['overview', 'sessions', 'projects', 'tools', 'timeline', 'errors', 'subagents', 'disciplines', 'events', 'live', 'search'];
 const state = {
   tab: 'overview',
-  data: { snapshot: null, sessions: [], projects: [], tools: [], timeline: [], stats: null, errors: [], subagents: [] },
+  data: { snapshot: null, sessions: [], projects: [], tools: [], timeline: [], stats: null, errors: [], subagents: [], disciplines: [] },
   query: '',
   searchResults: [],
   searching: false,
@@ -16,11 +16,11 @@ const state = {
 const api = (p) => fetch(p).then(r => r.json());
 
 async function loadAll() {
-  const [snapshot, sessions, projects, tools, timeline, stats, errors, subagents] = await Promise.all([
+  const [snapshot, sessions, projects, tools, timeline, stats, errors, subagents, disciplines] = await Promise.all([
     api('/api/snapshot'), api('/api/sessions'), api('/api/projects'), api('/api/tools'),
-    api('/api/timeline'), api('/api/stats'), api('/api/errors'), api('/api/subagents'),
+    api('/api/timeline'), api('/api/stats'), api('/api/errors'), api('/api/subagents'), api('/api/disciplines'),
   ]);
-  state.data = { snapshot, sessions, projects, tools, timeline, stats, errors, subagents };
+  state.data = { snapshot, sessions, projects, tools, timeline, stats, errors, subagents, disciplines };
   render();
 }
 
@@ -147,6 +147,17 @@ function SubagentsView() {
   ) });
 }
 
+function DisciplinesView() {
+  const list = state.data.disciplines || [];
+  const total = list.reduce((s, d) => s + (d.count || 0), 0);
+  return C.Panel({ head: `disciplines · ${total} finding(s) across ${list.length} detector(s)`, children: h('div', {},
+    ...list.map(d => h('div', { style: 'padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.05)' },
+      h('div', {}, h('span', { class: d.count ? 'accent' : '' }, d.label), '  ', h('span', { class: 'pill' + (d.count ? ' err' : '') }, n(d.count))),
+      ...(d.findings || []).slice(0, 10).map(f => h('div', { style: 'font-family:var(--ff-mono, ui-monospace, monospace);font-size:12px;opacity:.8;padding:2px 0' }, f)),
+    )),
+  ) });
+}
+
 function PresetChips() {
   const presets = state.defaults.presets || [];
   return h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px' },
@@ -260,7 +271,7 @@ async function doSearch() {
   state.searching = false; render();
 }
 
-const VIEWS = { overview: Overview, sessions: SessionsView, projects: ProjectsView, tools: ToolsView, timeline: TimelineView, errors: ErrorsView, subagents: SubagentsView, events: EventsView, live: LiveView, search: SearchView };
+const VIEWS = { overview: Overview, sessions: SessionsView, projects: ProjectsView, tools: ToolsView, timeline: TimelineView, errors: ErrorsView, subagents: SubagentsView, disciplines: DisciplinesView, events: EventsView, live: LiveView, search: SearchView };
 
 function App() {
   const s = state.data.snapshot || {};

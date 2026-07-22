@@ -42,6 +42,30 @@ function report(label, findings, maxSamples) {
   if (findings.length > maxSamples) process.stdout.write(`  ... ${findings.length - maxSamples} more\n`);
 }
 
+// Every detector below prints its own CLI report as a side effect (existing --*-discipline
+// flag contract, unchanged) AND stashes its last structured result here so a non-CLI caller
+// (e.g. a GUI route) can read {label, count, findings} without re-parsing stdout text or
+// re-running the scan. Detectors are synchronous and single-threaded per process, so last-run
+// storage keyed by label is race-free within one process.
+const _lastRun = new Map();
+
+function recordRun(label, findings) {
+  _lastRun.set(label, { label, count: findings.length, findings: findings.map(f => String(f).trim()) });
+}
+
+// Runs every discipline detector against rows and returns the structured {label,count,findings}
+// result for each, without relying on stdout capture. Used by the GUI /api/disciplines route;
+// CLI flag handling in cli.js keeps calling the individual named exports directly so its
+// existing per-flag stdout report behavior is untouched.
+export function runAllDisciplines(rows, maxSamples = 10) {
+  gitDiscipline(rows, maxSamples);
+  searchDiscipline(rows, maxSamples);
+  verbBypassDiscipline(rows, maxSamples);
+  spoolDiscipline(rows, maxSamples);
+  glyphDiscipline(rows, maxSamples);
+  return [..._lastRun.values()];
+}
+
 export function gitDiscipline(rows, maxSamples = 10) {
   const sessions = groupSessions(rows);
   const pushNoPorcelain = [];
@@ -65,6 +89,7 @@ export function gitDiscipline(rows, maxSamples = 10) {
   process.stdout.write(`# git-discipline: ${sessions.size} sessions, ${bashGit} raw git Bash events\n`);
   report('push without prior separate porcelain event', pushNoPorcelain, maxSamples);
   report('raw git push/commit inside gm session (spool bypass)', gmRawGit, maxSamples);
+  recordRun('git-discipline', [...pushNoPorcelain, ...gmRawGit]);
   return pushNoPorcelain.length + gmRawGit.length;
 }
 
@@ -85,6 +110,7 @@ export function searchDiscipline(rows, maxSamples = 10) {
   }
   process.stdout.write(`# search-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
   report('Grep/Glob discovery inside gm session', findings, maxSamples);
+  recordRun('search-discipline', findings);
   return findings.length;
 }
 
@@ -130,6 +156,7 @@ export function verbBypassDiscipline(rows, maxSamples = 10) {
   }
   process.stdout.write(`# verb-bypass-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
   report('platform-native tool used where a plugkit verb exists', findings, maxSamples);
+  recordRun('verb-bypass-discipline', findings);
   return findings.length;
 }
 
@@ -156,6 +183,7 @@ export function spoolDiscipline(rows, maxSamples = 10) {
   }
   process.stdout.write(`# spool-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
   report('spool writes without paired response reads (fabricated chain)', findings, maxSamples);
+  recordRun('spool-discipline', findings);
   return findings.length;
 }
 
@@ -178,5 +206,6 @@ export function glyphDiscipline(rows, maxSamples = 10) {
   }
   process.stdout.write(`# glyph-discipline: ${scanned} assistant text blocks scanned, ${glyphTotal} decorative glyphs\n`);
   report('assistant text with decorative non-ASCII glyphs', findings, maxSamples);
+  recordRun('glyph-discipline', findings);
   return findings.length;
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { JsonlReplayer, JsonlWatcher } from './index.js';
 import { buildIndex, search, snippet, tokenize } from './bm25.js';
 import { DEFAULT_PRESETS, DEFAULT_ACTIVE } from './filters.js';
+import { runAllDisciplines } from './discipline.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GUI_DIR = path.join(__dirname, '..', 'gui');
@@ -49,6 +50,12 @@ class Store {
   constructor(projectsDir) {
     this.projectsDir = projectsDir;
     this.events = [];
+    // Raw (unflattened) streaming_progress rows, same shape flattenEvent consumes
+    // ({conversation, block, role, timestamp, ...}) -- discipline.js's detectors read
+    // ev.conversation/ev.block directly and were designed against this exact CLI-collected
+    // shape, so the GUI keeps a parallel raw copy rather than reshaping flattened events
+    // back to fit (which would risk silently diverging from the CLI's own scan semantics).
+    this.rawEvents = [];
     this.errors = [];
     this.fileBytes = 0;
     this.fileCount = 0;
@@ -61,7 +68,7 @@ class Store {
   loadOnce() {
     const r = new JsonlReplayer(this.projectsDir);
     let i = 0;
-    r.on('streaming_progress', ev => { this.events.push(flattenEvent(ev, i++)); });
+    r.on('streaming_progress', ev => { this.events.push(flattenEvent(ev, i++)); this.rawEvents.push(ev); });
     r.on('streaming_error', ev => { this.errors.push({ ts: ev.timestamp, sid: ev.conversationId, error: ev.error, recoverable: ev.recoverable }); });
     const stats = r.replay({});
     this.fileCount = stats.files;
@@ -80,6 +87,7 @@ class Store {
     this.watcher.on('streaming_progress', ev => {
       const fl = flattenEvent(ev, this.events.length);
       this.events.push(fl);
+      this.rawEvents.push(ev);
       this.broadcast('event', fl);
     });
     this.watcher.on('streaming_error', ev => {
@@ -195,6 +203,8 @@ class Store {
   }
 
   errorsList() { return this.errors.slice(-200).reverse(); }
+
+  disciplines() { return runAllDisciplines(this.rawEvents); }
 
   subagents() {
     const tree = new Map();
@@ -338,6 +348,7 @@ export function createServer({ projectsDir, port = 0, host = '127.0.0.1' } = {})
       if (path === '/api/stats') return send(res, 200, store.stats());
       if (path === '/api/errors') return send(res, 200, store.errorsList());
       if (path === '/api/subagents') return send(res, 200, store.subagents());
+      if (path === '/api/disciplines') return send(res, 200, store.disciplines());
       if (path === '/api/events') return send(res, 200, store.events_filtered(q));
       if (path === '/api/defaults') return send(res, 200, DEFAULT_FILTERS);
       if (path === '/api/search') return send(res, 200, { query: q.q || '', results: q.q ? store.search(q.q, q) : [] });
