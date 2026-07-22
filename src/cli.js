@@ -33,10 +33,13 @@ const FLAGS = {
   bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h', 'git-discipline', 'search-discipline', 'glyph-discipline'],
 };
 
+const KNOWN_FLAGS = new Set([...FLAGS.bool, ...FLAGS.string, ...FLAGS.multi, ...FLAGS.number]);
+
 function parseArgs(argv) {
   const opts = { _multi: {} };
   for (const k of FLAGS.multi) opts._multi[k] = [];
   const rest = [];
+  const unknown = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') { opts.help = true; continue; }
@@ -44,10 +47,15 @@ function parseArgs(argv) {
     if (!a.startsWith('--')) { rest.push(a); continue; }
     const key = a.slice(2);
     if (FLAGS.bool.includes(key)) { opts[key] = true; continue; }
+    if (!KNOWN_FLAGS.has(key)) { unknown.push(a); continue; }
     const val = argv[++i];
     if (FLAGS.multi.includes(key)) opts._multi[key].push(val);
     else if (FLAGS.number.includes(key)) opts[key] = parseInt(val, 10) || 0;
     else opts[key] = val;
+  }
+  if (unknown.length) {
+    process.stderr.write(`ccsniff: unrecognized flag(s): ${unknown.join(', ')}\nRun with --help to see valid flags. Silently ignoring an unknown flag previously let it swallow the NEXT argument as a bogus value (e.g. --verb-bypass-discipline eating --since's value), producing an unbounded scan instead of the intended filtered query.\n`);
+    process.exit(1);
   }
   return { opts, rest };
 }
@@ -332,7 +340,7 @@ if (limit) rows = rows.slice(0, limit);
 
 const DEFAULT_CAP = 500;
 let capped = 0;
-  if (!opts['full-history'] && !opts.stats && !opts.count && !opts.unsloth && !opts.json && !opts.ndjson && rows.length > DEFAULT_CAP) {
+if (!opts['full-history'] && !opts.stats && !opts.count && !opts.unsloth && rows.length > DEFAULT_CAP) {
   capped = rows.length - DEFAULT_CAP;
   rows = rows.slice(-DEFAULT_CAP);
 }
