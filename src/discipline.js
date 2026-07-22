@@ -95,6 +95,7 @@ function stripCode(text) {
 const GM_SPOOL_OUT_RE = /\.gm[\\\/]exec-spool[\\\/]out[\\\/]/;
 const MEMORY_WRITE_RE = /[\\\/]\.claude[\\\/]projects[\\\/][^\\\/]+[\\\/]memory[\\\/]|[\\\/]\.codex[\\\/]memory[\\\/]|[\\\/]\.cursor[\\\/]/;
 const BROWSER_LIB_RE = /\b(puppeteer|playwright)\b/i;
+const GIT_LEADING_RE = /^\s*(cd\s+\S+\s*&&\s*)?git\b/;
 
 export function verbBypassDiscipline(rows, maxSamples = 10) {
   const sessions = groupSessions(rows);
@@ -113,8 +114,15 @@ export function verbBypassDiscipline(rows, maxSamples = 10) {
         if (/\b(find|search|where|locate|grep|look for)\b/i.test(desc)) {
           findings.push(sample(ev, `${b.name} ${desc.slice(0, 80)} (use codesearch verb)`));
         }
-      } else if (b.name === 'Bash' && BROWSER_LIB_RE.test(String(b.input?.command || ''))) {
-        findings.push(sample(ev, `Bash ${b.input?.command} (use browser verb)`));
+      } else if (b.name === 'Bash') {
+        const cmd = String(b.input?.command || '');
+        // A git command (commit -m heredoc body, push, etc) merely MENTIONING
+        // puppeteer/playwright in prose text is not a bypass -- only flag when
+        // the command isn't git-led, so a commit message describing this exact
+        // detector doesn't trip itself.
+        if (BROWSER_LIB_RE.test(cmd) && !GIT_LEADING_RE.test(cmd)) {
+          findings.push(sample(ev, `Bash ${cmd} (use browser verb)`));
+        }
       } else if (b.name === 'Write' && MEMORY_WRITE_RE.test(String(b.input?.file_path || ''))) {
         findings.push(sample(ev, `Write ${b.input?.file_path} (use memorize-fire verb)`));
       }
