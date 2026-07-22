@@ -59,9 +59,11 @@ npx ccsniff --unsloth train.jsonl --unsloth-format sharegpt --since 7d
 npx ccsniff --git-discipline --since 7d --project myrepo
 npx ccsniff --search-discipline --since 7d
 npx ccsniff --glyph-discipline --since 24h
+npx ccsniff --verb-bypass-discipline --since 7d
+npx ccsniff --spool-discipline --since 24h
 ```
 
-Discipline audits: `--git-discipline` flags `git push` without a prior separate `git status --porcelain` Bash event and raw git push/commit inside gm (spool-dispatching) sessions; `--search-discipline` flags Grep/Glob discovery events inside gm sessions; `--glyph-discipline` flags decorative non-ASCII glyphs in assistant text (code blocks excluded). All compose with `--project`/`--since`.
+Discipline audits: `--git-discipline` flags `git push` without a prior separate `git status --porcelain` Bash event and raw git push/commit inside gm (spool-dispatching) sessions; `--search-discipline` flags Grep/Glob discovery events inside gm sessions; `--glyph-discipline` flags decorative non-ASCII glyphs in assistant text (code blocks excluded); `--verb-bypass-discipline` flags WebFetch/WebSearch/Task-search/raw-browser-lib/raw-memory-write inside gm sessions where a plugkit verb already exists for that action; `--spool-discipline` flags gm sessions that write exec-spool/in dispatches without ever reading a matching out/ response (a fabricated chain). All compose with `--project`/`--since`.
 
 ### Unsloth training export
 
