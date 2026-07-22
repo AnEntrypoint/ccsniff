@@ -92,6 +92,65 @@ function stripCode(text) {
   return text.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
 }
 
+const GM_SPOOL_OUT_RE = /\.gm[\\\/]exec-spool[\\\/]out[\\\/]/;
+const MEMORY_WRITE_RE = /[\\\/]\.claude[\\\/]projects[\\\/][^\\\/]+[\\\/]memory[\\\/]|[\\\/]\.codex[\\\/]memory[\\\/]|[\\\/]\.cursor[\\\/]/;
+const BROWSER_LIB_RE = /\b(puppeteer|playwright)\b/i;
+
+export function verbBypassDiscipline(rows, maxSamples = 10) {
+  const sessions = groupSessions(rows);
+  const findings = [];
+  let gmSessions = 0;
+  for (const evs of sessions.values()) {
+    if (!isGmSession(evs)) continue;
+    gmSessions++;
+    for (const ev of evs) {
+      const b = ev.block || {};
+      if (b.type !== 'tool_use') continue;
+      if (b.name === 'WebFetch' || b.name === 'WebSearch') {
+        findings.push(sample(ev, `${b.name} ${b.input?.url || b.input?.query || ''} (use fetch verb)`));
+      } else if (b.name === 'Task' || b.name === 'Agent') {
+        const desc = String(b.input?.description || b.input?.prompt || '');
+        if (/\b(find|search|where|locate|grep|look for)\b/i.test(desc)) {
+          findings.push(sample(ev, `${b.name} ${desc.slice(0, 80)} (use codesearch verb)`));
+        }
+      } else if (b.name === 'Bash' && BROWSER_LIB_RE.test(String(b.input?.command || ''))) {
+        findings.push(sample(ev, `Bash ${b.input?.command} (use browser verb)`));
+      } else if (b.name === 'Write' && MEMORY_WRITE_RE.test(String(b.input?.file_path || ''))) {
+        findings.push(sample(ev, `Write ${b.input?.file_path} (use memorize-fire verb)`));
+      }
+    }
+  }
+  process.stdout.write(`# verb-bypass-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
+  report('platform-native tool used where a plugkit verb exists', findings, maxSamples);
+  return findings.length;
+}
+
+export function spoolDiscipline(rows, maxSamples = 10) {
+  const sessions = groupSessions(rows);
+  const findings = [];
+  let gmSessions = 0;
+  for (const evs of sessions.values()) {
+    if (!isGmSession(evs)) continue;
+    gmSessions++;
+    let writes = 0, reads = 0;
+    let lastEv = null;
+    for (const ev of evs) {
+      const b = ev.block || {};
+      if (b.type !== 'tool_use') continue;
+      if (b.name === 'Write' && GM_SPOOL_RE.test(String(b.input?.file_path || ''))) { writes++; lastEv = ev; }
+      if (b.name === 'Read' && GM_SPOOL_OUT_RE.test(String(b.input?.file_path || ''))) reads++;
+    }
+    if (writes >= 3 && reads === 0) {
+      findings.push(sample(lastEv, `${writes} spool dispatch(es) written, 0 out/ responses read -- fabricated chain`));
+    } else if (writes >= 5 && reads > 0 && reads < writes / 3) {
+      findings.push(sample(lastEv, `${writes} spool dispatch(es) written, only ${reads} out/ responses read -- under-witnessed chain`));
+    }
+  }
+  process.stdout.write(`# spool-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
+  report('spool writes without paired response reads (fabricated chain)', findings, maxSamples);
+  return findings.length;
+}
+
 export function glyphDiscipline(rows, maxSamples = 10) {
   const findings = [];
   let scanned = 0;

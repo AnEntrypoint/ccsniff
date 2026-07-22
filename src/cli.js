@@ -30,7 +30,7 @@ const FLAGS = {
   string: ['since', 'until', 'before', 'after', 'grep', 'igrep', 'cwd', 'project', 'role', 'type', 'tool', 'session', 'sid', 'sess', 'parent', 'rollup', 'format', 'sort', 'unsloth', 'unsloth-format', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   multi: ['grep', 'igrep', 'role', 'type', 'tool', 'session', 'sid', 'project', 'cwd', 'exclude-sess', 'exclude-sid', 'exclude-cwd', 'exclude-project'],
   number: ['limit', 'head', 'tail-n', 'ctx', 'truncate', 'days'],
-  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h', 'git-discipline', 'search-discipline', 'glyph-discipline'],
+  bool: ['json', 'ndjson', 'tail', 'f', 'full', 'reverse', 'invert', 'no-subagents', 'only-subagents', 'no-meta', 'only-meta', 'list-sessions', 'list-projects', 'list-tools', 'text', 'full-history', 'stats', 'count', 'help', 'h', 'git-discipline', 'search-discipline', 'glyph-discipline', 'verb-bypass-discipline', 'spool-discipline'],
 };
 
 const KNOWN_FLAGS = new Set([...FLAGS.bool, ...FLAGS.string, ...FLAGS.multi, ...FLAGS.number]);
@@ -121,6 +121,8 @@ AUDIT
   --git-discipline       flag git push without prior separate porcelain event; raw git push/commit in gm sessions
   --search-discipline    flag Grep/Glob discovery events inside gm (spool-dispatching) sessions
   --glyph-discipline     flag decorative non-ASCII glyphs in assistant text (code blocks excluded)
+  --verb-bypass-discipline  flag WebFetch/WebSearch/Task-search/raw-browser-lib/raw-memory-write in gm sessions where a plugkit verb exists
+  --spool-discipline     flag gm sessions writing exec-spool/in dispatches without reading matching out/ responses (fabricated chain)
 
 LIMITS
   by default, output caps at the 500 most recent matching events (after --limit/--tail-n/--ctx apply)
@@ -258,12 +260,14 @@ if (opts.tail) {
 const { stats, all } = collect(opts, since);
 
 // ---------- discipline audits
-if (opts['git-discipline'] || opts['search-discipline'] || opts['glyph-discipline']) {
-  const { gitDiscipline, searchDiscipline, glyphDiscipline } = await import('./discipline.js');
+if (opts['git-discipline'] || opts['search-discipline'] || opts['glyph-discipline'] || opts['verb-bypass-discipline'] || opts['spool-discipline']) {
+  const { gitDiscipline, searchDiscipline, glyphDiscipline, verbBypassDiscipline, spoolDiscipline } = await import('./discipline.js');
   const rows = all.filter(filter);
   if (opts['git-discipline']) gitDiscipline(rows);
   if (opts['search-discipline']) searchDiscipline(rows);
   if (opts['glyph-discipline']) glyphDiscipline(rows);
+  if (opts['verb-bypass-discipline']) verbBypassDiscipline(rows);
+  if (opts['spool-discipline']) spoolDiscipline(rows);
   process.stderr.write(`# ${stats.events} events / ${stats.files} files / ${rows.length} in scope\n`);
   process.exit(0);
 }
