@@ -141,3 +141,7 @@ Node >= 18. Zero external dependencies.
 ## License
 
 MIT
+
+## Donations
+
+BTC: `15FLMay4of9rk4jK2davzzL4HDdGQtscGX`
