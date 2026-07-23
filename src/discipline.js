@@ -93,10 +93,20 @@ export function gitDiscipline(rows, maxSamples = 10) {
   return pushNoPorcelain.length + gmRawGit.length;
 }
 
+const GM_STATE_PATH_RE = /\.gm[\\\/](prd\.yml|mutables\.yml|exec-spool[\\\/](out|in|instructions)[\\\/]|instructions[\\\/]|daemon-config-reference\.md|next-step\.md)/;
+
+function isExemptKnownPathLookup(toolName, input) {
+  const targetPath = String(input?.path || '');
+  if (GM_STATE_PATH_RE.test(targetPath)) return true;
+  if (toolName === 'Grep' && targetPath && !targetPath.endsWith('/') && /\.[a-zA-Z0-9]+$/.test(targetPath)) return true;
+  return false;
+}
+
 export function searchDiscipline(rows, maxSamples = 10) {
   const sessions = groupSessions(rows);
   const findings = [];
   let gmSessions = 0;
+  let exempted = 0;
   for (const evs of sessions.values()) {
     if (!isGmSession(evs)) continue;
     gmSessions++;
@@ -104,11 +114,12 @@ export function searchDiscipline(rows, maxSamples = 10) {
       const b = ev.block || {};
       if (b.type !== 'tool_use') continue;
       if (b.name !== 'Grep' && b.name !== 'Glob') continue;
+      if (isExemptKnownPathLookup(b.name, b.input)) { exempted++; continue; }
       const detail = `${b.name} ${b.input?.pattern || ''}`;
       findings.push(sample(ev, detail));
     }
   }
-  process.stdout.write(`# search-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
+  process.stdout.write(`# search-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions, ${exempted} exempt known-path lookups skipped\n`);
   report('Grep/Glob discovery inside gm session', findings, maxSamples);
   recordRun('search-discipline', findings);
   return findings.length;
