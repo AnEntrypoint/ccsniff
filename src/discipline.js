@@ -28,18 +28,22 @@ function isGmSession(evs) {
   return false;
 }
 
-function sample(ev, detail) {
+function sample(ev, detail, manual) {
   const sid = (ev.conversation?.id || '?').slice(0, 8);
   const iso = new Date(ev.timestamp || 0).toISOString().slice(0, 19).replace('T', ' ');
   const repo = path.basename(ev.conversation?.cwd || '');
+  if (manual) {
+    const text = String(detail).replace(/\s+/g, ' ');
+    return `  [${iso}] [${repo}] ${sid}\n    ${text}\n`;
+  }
   const text = String(detail).replace(/\s+/g, ' ').slice(0, 160);
   return `  [${iso}] [${repo}] ${sid}  ${text}\n`;
 }
 
-function report(label, findings, maxSamples) {
-  process.stdout.write(`# ${label}: ${findings.length} finding(s)\n`);
-  for (const f of findings.slice(0, maxSamples)) process.stdout.write(f);
-  if (findings.length > maxSamples) process.stdout.write(`  ... ${findings.length - maxSamples} more\n`);
+function report(label, observations, maxSamples) {
+  process.stdout.write(`# ${label}: ${observations.length} observation(s) for manual review\n`);
+  for (const f of observations.slice(0, maxSamples)) process.stdout.write(f);
+  if (observations.length > maxSamples) process.stdout.write(`  ... ${observations.length - maxSamples} more\n`);
 }
 
 // Every detector below prints its own CLI report as a side effect (existing --*-discipline
@@ -57,16 +61,16 @@ function recordRun(label, findings) {
 // result for each, without relying on stdout capture. Used by the GUI /api/disciplines route;
 // CLI flag handling in cli.js keeps calling the individual named exports directly so its
 // existing per-flag stdout report behavior is untouched.
-export function runAllDisciplines(rows, maxSamples = 10) {
-  gitDiscipline(rows, maxSamples);
-  searchDiscipline(rows, maxSamples);
-  verbBypassDiscipline(rows, maxSamples);
-  spoolDiscipline(rows, maxSamples);
-  glyphDiscipline(rows, maxSamples);
+export function runAllDisciplines(rows, maxSamples = 10, manual = false) {
+  gitDiscipline(rows, maxSamples, manual);
+  searchDiscipline(rows, maxSamples, manual);
+  verbBypassDiscipline(rows, maxSamples, manual);
+  spoolDiscipline(rows, maxSamples, manual);
+  glyphDiscipline(rows, maxSamples, manual);
   return [..._lastRun.values()];
 }
 
-export function gitDiscipline(rows, maxSamples = 10) {
+export function gitDiscipline(rows, maxSamples = 10, manual = false) {
   const sessions = groupSessions(rows);
   const pushNoPorcelain = [];
   const gmRawGit = [];
@@ -81,14 +85,14 @@ export function gitDiscipline(rows, maxSamples = 10) {
       if (!/\bgit\b/.test(cmd)) continue;
       bashGit++;
       if (PORCELAIN_RE.test(cmd) && !GIT_PUSH_RE.test(cmd)) porcelainSeen = true;
-      if (GIT_PUSH_RE.test(cmd) && !porcelainSeen) pushNoPorcelain.push(sample(ev, cmd));
-      if (gm && GIT_COMMIT_RE.test(cmd)) gmRawGit.push(sample(ev, cmd));
+      if (GIT_PUSH_RE.test(cmd) && !porcelainSeen) pushNoPorcelain.push(sample(ev, cmd, manual));
+      if (gm && GIT_COMMIT_RE.test(cmd)) gmRawGit.push(sample(ev, cmd, manual));
       if (GIT_PUSH_RE.test(cmd)) porcelainSeen = false;
     }
   }
   process.stdout.write(`# git-discipline: ${sessions.size} sessions, ${bashGit} raw git Bash events\n`);
-  report('push without prior separate porcelain event', pushNoPorcelain, maxSamples);
-  report('raw git push/commit inside gm session (spool bypass)', gmRawGit, maxSamples);
+  report('git push without a prior separate porcelain status check', pushNoPorcelain, maxSamples);
+  report('git push/commit inside a gm session (may indicate spool bypass)', gmRawGit, maxSamples);
   recordRun('git-discipline', [...pushNoPorcelain, ...gmRawGit]);
   return pushNoPorcelain.length + gmRawGit.length;
 }
@@ -102,9 +106,9 @@ function isExemptKnownPathLookup(toolName, input) {
   return false;
 }
 
-export function searchDiscipline(rows, maxSamples = 10) {
+export function searchDiscipline(rows, maxSamples = 10, manual = false) {
   const sessions = groupSessions(rows);
-  const findings = [];
+  const observations = [];
   let gmSessions = 0;
   let exempted = 0;
   for (const evs of sessions.values()) {
@@ -116,13 +120,13 @@ export function searchDiscipline(rows, maxSamples = 10) {
       if (b.name !== 'Grep' && b.name !== 'Glob') continue;
       if (isExemptKnownPathLookup(b.name, b.input)) { exempted++; continue; }
       const detail = `${b.name} ${b.input?.pattern || ''}`;
-      findings.push(sample(ev, detail));
+      observations.push(sample(ev, detail, manual));
     }
   }
   process.stdout.write(`# search-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions, ${exempted} exempt known-path lookups skipped\n`);
-  report('Grep/Glob discovery inside gm session', findings, maxSamples);
-  recordRun('search-discipline', findings);
-  return findings.length;
+  report('Grep/Glob discovery inside gm session (prefer codesearch verb)', observations, maxSamples);
+  recordRun('search-discipline', observations);
+  return observations.length;
 }
 
 function stripCode(text) {
@@ -134,9 +138,9 @@ const MEMORY_WRITE_RE = /[\\\/]\.claude[\\\/]projects[\\\/][^\\\/]+[\\\/]memory[
 const BROWSER_LIB_RE = /\b(puppeteer|playwright)\b/i;
 const GIT_LEADING_RE = /^\s*(cd\s+\S+\s*&&\s*)?git\b/;
 
-export function verbBypassDiscipline(rows, maxSamples = 10) {
+export function verbBypassDiscipline(rows, maxSamples = 10, manual = false) {
   const sessions = groupSessions(rows);
-  const findings = [];
+  const observations = [];
   let gmSessions = 0;
   for (const evs of sessions.values()) {
     if (!isGmSession(evs)) continue;
@@ -145,35 +149,31 @@ export function verbBypassDiscipline(rows, maxSamples = 10) {
       const b = ev.block || {};
       if (b.type !== 'tool_use') continue;
       if (b.name === 'WebFetch' || b.name === 'WebSearch') {
-        findings.push(sample(ev, `${b.name} ${b.input?.url || b.input?.query || ''} (use fetch verb)`));
+        observations.push(sample(ev, `${b.name} ${b.input?.url || b.input?.query || ''} (use fetch verb)`, manual));
       } else if (b.name === 'Task' || b.name === 'Agent') {
         const desc = String(b.input?.description || b.input?.prompt || '');
         if (/\b(find|search|where|locate|grep|look for)\b/i.test(desc)) {
-          findings.push(sample(ev, `${b.name} ${desc.slice(0, 80)} (use codesearch verb)`));
+          observations.push(sample(ev, `${b.name} ${desc.slice(0, 80)} (use codesearch verb)`, manual));
         }
       } else if (b.name === 'Bash') {
         const cmd = String(b.input?.command || '');
-        // A git command (commit -m heredoc body, push, etc) merely MENTIONING
-        // puppeteer/playwright in prose text is not a bypass -- only flag when
-        // the command isn't git-led, so a commit message describing this exact
-        // detector doesn't trip itself.
         if (BROWSER_LIB_RE.test(cmd) && !GIT_LEADING_RE.test(cmd)) {
-          findings.push(sample(ev, `Bash ${cmd} (use browser verb)`));
+          observations.push(sample(ev, `Bash ${cmd} (use browser verb)`, manual));
         }
       } else if (b.name === 'Write' && MEMORY_WRITE_RE.test(String(b.input?.file_path || ''))) {
-        findings.push(sample(ev, `Write ${b.input?.file_path} (use memorize-fire verb)`));
+        observations.push(sample(ev, `Write ${b.input?.file_path} (use memorize-fire verb)`, manual));
       }
     }
   }
   process.stdout.write(`# verb-bypass-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
-  report('platform-native tool used where a plugkit verb exists', findings, maxSamples);
-  recordRun('verb-bypass-discipline', findings);
-  return findings.length;
+  report('platform-native tool used where a plugkit verb exists', observations, maxSamples);
+  recordRun('verb-bypass-discipline', observations);
+  return observations.length;
 }
 
-export function spoolDiscipline(rows, maxSamples = 10) {
+export function spoolDiscipline(rows, maxSamples = 10, manual = false) {
   const sessions = groupSessions(rows);
-  const findings = [];
+  const observations = [];
   let gmSessions = 0;
   for (const evs of sessions.values()) {
     if (!isGmSession(evs)) continue;
@@ -187,19 +187,19 @@ export function spoolDiscipline(rows, maxSamples = 10) {
       if (b.name === 'Read' && GM_SPOOL_OUT_RE.test(String(b.input?.file_path || ''))) reads++;
     }
     if (writes >= 3 && reads === 0) {
-      findings.push(sample(lastEv, `${writes} spool dispatch(es) written, 0 out/ responses read -- fabricated chain`));
+      observations.push(sample(lastEv, `${writes} spool dispatch(es) written, 0 out/ responses read -- may indicate fabricated chain`, manual));
     } else if (writes >= 5 && reads > 0 && reads < writes / 3) {
-      findings.push(sample(lastEv, `${writes} spool dispatch(es) written, only ${reads} out/ responses read -- under-witnessed chain`));
+      observations.push(sample(lastEv, `${writes} spool dispatch(es) written, only ${reads} out/ responses read -- may indicate under-witnessed chain`, manual));
     }
   }
   process.stdout.write(`# spool-discipline: ${sessions.size} sessions, ${gmSessions} gm sessions\n`);
-  report('spool writes without paired response reads (fabricated chain)', findings, maxSamples);
-  recordRun('spool-discipline', findings);
-  return findings.length;
+  report('spool writes without paired response reads', observations, maxSamples);
+  recordRun('spool-discipline', observations);
+  return observations.length;
 }
 
-export function glyphDiscipline(rows, maxSamples = 10) {
-  const findings = [];
+export function glyphDiscipline(rows, maxSamples = 10, manual = false) {
+  const observations = [];
   let scanned = 0;
   let glyphTotal = 0;
   for (const ev of rows) {
@@ -212,11 +212,12 @@ export function glyphDiscipline(rows, maxSamples = 10) {
     glyphTotal += matches.length;
     const uniq = [...new Set(matches)].slice(0, 8).join(' ');
     const ctxIdx = text.search(GLYPH_RE);
-    const ctx = text.slice(Math.max(0, ctxIdx - 40), ctxIdx + 40);
-    findings.push(sample(ev, `${matches.length}x [${uniq}] ...${ctx}...`));
+    const ctxLen = manual ? 120 : 40;
+    const ctx = text.slice(Math.max(0, ctxIdx - ctxLen), ctxIdx + ctxLen);
+    observations.push(sample(ev, `${matches.length}x [${uniq}] ...${ctx}...`, manual));
   }
   process.stdout.write(`# glyph-discipline: ${scanned} assistant text blocks scanned, ${glyphTotal} decorative glyphs\n`);
-  report('assistant text with decorative non-ASCII glyphs', findings, maxSamples);
-  recordRun('glyph-discipline', findings);
-  return findings.length;
+  report('assistant text with decorative non-ASCII glyphs', observations, maxSamples);
+  recordRun('glyph-discipline', observations);
+  return observations.length;
 }
